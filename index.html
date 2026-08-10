@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One PR, a million lines of Rust — what it did to Bun's bug reports</title>
+<meta name="description" content="A study of how Bun's single-PR, AI-assisted Rust rewrite (oven-sh/bun#30412) affected bug reports, fix rates and release cadence — with a verified-source discussion and conclusions.">
+<meta name="color-scheme" content="light dark">
+<style>*,*::before,*::after{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0}img,svg{max-width:100%}</style>
+<style>
+:root{
+  color-scheme: light;
+  --paper:#eef1f6; --surface:#ffffff; --surface-2:#f6f8fb;
+  --ink:#0f1720; --muted:#5a6672; --faint:#8792a0;
+  --line:#d3dae2; --line-strong:#aeb9c6;
+  --s1:#b8501f;  --s2:#0896bd;  --pre:#4f5bc4;  --unk:#7f8d9d;
+  --s1-soft:rgba(184,80,31,.13); --censor:rgba(90,102,114,.10);
+  --rule:#0f1720;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --paper:#0c1116; --surface:#141b23; --surface-2:#19212a;
+    --ink:#dde5ec; --muted:#8895a3; --faint:#6b7784;
+    --line:#253039; --line-strong:#3a4854;
+    --s1:#d2611f; --s2:#1a9cc0; --pre:#7b83e0; --unk:#657585;
+    --s1-soft:rgba(210,97,31,.17); --censor:rgba(136,149,163,.12);
+    --rule:#dde5ec;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --paper:#0c1116; --surface:#141b23; --surface-2:#19212a;
+  --ink:#dde5ec; --muted:#8895a3; --faint:#6b7784;
+  --line:#253039; --line-strong:#3a4854;
+  --s1:#d2611f; --s2:#1a9cc0; --pre:#7b83e0; --unk:#657585;
+  --s1-soft:rgba(210,97,31,.17); --censor:rgba(136,149,163,.12);
+  --rule:#dde5ec;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,"DejaVu Sans Mono",Consolas,monospace;
+  font-size:13px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.prose{font-family:system-ui,-apple-system,"Segoe UI",Cantarell,"Noto Sans",sans-serif}
+.wrap{max-width:1100px; margin:0 auto; padding:40px 24px 96px; display:flex; flex-direction:column; gap:54px}
+a{color:inherit; text-decoration-color:var(--line-strong); text-underline-offset:3px}
+a:hover{text-decoration-color:currentColor}
+a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--s2); outline-offset:2px; border-radius:2px}
+.num{font-variant-numeric:tabular-nums}
+
+.rec{display:flex; flex-direction:column; gap:22px}
+.kicker{font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted)}
+h1{margin:0; font-size:clamp(25px,4.2vw,38px); line-height:1.12; font-weight:600; letter-spacing:-.022em; text-wrap:balance; max-width:24ch}
+h1 em{font-style:normal; color:var(--s1)}
+.lede{font-size:16px; line-height:1.62; color:var(--muted); max-width:66ch; margin:0}
+.fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(172px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:3px; overflow:hidden}
+.fields div{background:var(--surface); padding:11px 13px; display:flex; flex-direction:column; gap:4px}
+.fields dt{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint)}
+.fields dd{margin:0; font-size:13px; font-variant-numeric:tabular-nums}
+
+section{display:flex; flex-direction:column; gap:18px}
+h2{margin:0; font-size:12px; letter-spacing:.2em; text-transform:uppercase; font-weight:600; color:var(--muted); display:flex; align-items:center; gap:14px}
+h2::after{content:""; flex:1; height:1px; background:var(--line)}
+h3{margin:0; font-size:14px; font-weight:600; letter-spacing:-.01em}
+p{margin:0}
+.prose p{font-size:15px; line-height:1.66; max-width:70ch; color:var(--ink)}
+.prose p + p{margin-top:13px}
+
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(292px,1fr)); gap:13px}
+.stat{background:var(--surface); border:1px solid var(--line); border-radius:3px; padding:15px 16px 14px; display:flex; flex-direction:column; gap:7px}
+.stat.key{border-color:var(--s1); border-width:1px; box-shadow:inset 3px 0 0 var(--s1)}
+.stat .lbl{font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); line-height:1.4}
+.stat .big{font-size:31px; line-height:1; font-weight:600; letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.stat .sub{font-size:11.5px; color:var(--muted); line-height:1.45; font-variant-numeric:tabular-nums}
+.tick{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-variant-numeric:tabular-nums}
+.tick::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor; flex:none}
+.t-flat{color:var(--muted)} .t-move{color:var(--s1)}
+
+figure{margin:0; background:var(--surface); border:1px solid var(--line); border-radius:3px; padding:20px 20px 16px; display:flex; flex-direction:column; gap:16px}
+figcaption{font-size:11.5px; color:var(--muted); line-height:1.6; max-width:82ch}
+.figtop{display:flex; flex-wrap:wrap; gap:12px 26px; align-items:baseline; justify-content:space-between}
+.legend{display:flex; flex-wrap:wrap; gap:6px 18px; font-size:11.5px}
+.legend span{display:inline-flex; align-items:center; gap:7px; color:var(--muted)}
+.swatch{width:11px; height:11px; border-radius:2px; flex:none}
+.chartbox{overflow-x:auto; overflow-y:hidden}
+svg{display:block}
+.gridline{stroke:var(--line); stroke-width:1}
+.axis-lab{fill:var(--faint); font-size:10px; font-family:inherit}
+.mean-line{stroke:var(--ink); stroke-width:1.5; stroke-dasharray:1 4; stroke-linecap:round; opacity:.5}
+.mean-tag{fill:var(--ink); font-size:10.5px; font-family:inherit; opacity:.8;
+  paint-order:stroke; stroke:var(--surface); stroke-width:3.5px; stroke-linejoin:round}
+.cut{stroke:var(--rule); stroke-width:1.5}
+.cut-tag{fill:var(--rule); font-size:10.5px; font-family:inherit; letter-spacing:.07em}
+.era{fill:var(--muted); font-size:10px; font-family:inherit; letter-spacing:.1em;
+  paint-order:stroke; stroke:var(--surface); stroke-width:3.5px; stroke-linejoin:round}
+.reltick{stroke:var(--muted); stroke-width:1.5; stroke-linecap:round}
+.rellab{fill:var(--faint); font-size:9px; font-family:inherit}
+.relrail{stroke:var(--line-strong); stroke-width:1}
+.drought{fill:var(--s1-soft)}
+.drought-tag{fill:var(--s1); font-size:10px; font-family:inherit; font-weight:600; letter-spacing:.04em}
+.censor{fill:var(--censor)}
+.censor-tag{fill:var(--muted); font-size:9.5px; font-family:inherit}
+.bar-hit{fill:transparent; cursor:crosshair}
+.figwrap{position:relative}
+.tip{position:absolute; pointer-events:none; opacity:0; transition:opacity .1s; background:var(--surface); border:1px solid var(--line-strong); border-radius:3px; padding:8px 10px; font-size:11.5px; line-height:1.6; white-space:nowrap; box-shadow:0 6px 20px rgba(8,16,26,.16); z-index:5; font-variant-numeric:tabular-nums}
+.tip b{font-weight:600}
+.tip .row{display:flex; align-items:center; gap:7px; color:var(--muted)}
+.tip .row .swatch{width:8px; height:8px}
+
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(285px,1fr)); gap:13px}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:3px; padding:16px 17px; display:flex; flex-direction:column; gap:9px}
+.card .tag{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--s1); font-weight:600}
+.card p{font-size:12.5px; line-height:1.62; color:var(--muted)}
+.card p strong{color:var(--ink); font-weight:600}
+
+.qlist{display:flex; flex-direction:column; gap:14px}
+.q{border-left:2px solid var(--s1); padding:2px 0 2px 13px; display:flex; flex-direction:column; gap:5px}
+.q.c2{border-color:var(--s2)}
+.q .qt{font-size:13px; line-height:1.62; color:var(--ink)}
+.q .qa{font-size:10.5px; color:var(--faint); line-height:1.55; font-family:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.q .qa b{color:var(--muted); font-weight:600}
+ol.verdict{margin:0; padding-left:1.35em; display:flex; flex-direction:column; gap:12px}
+ol.verdict li{font-size:15px; line-height:1.66; color:var(--ink); max-width:72ch}
+ol.verdict li::marker{color:var(--s1); font-weight:600}
+
+.tablebox{overflow-x:auto; border:1px solid var(--line); border-radius:3px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:12.5px; font-variant-numeric:tabular-nums}
+th,td{padding:7px 12px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line)}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+thead th{font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--faint); font-weight:600; position:sticky; top:0; background:var(--surface-2); border-bottom:1px solid var(--line-strong); z-index:1}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--surface-2)}
+tr.merge td{background:var(--s1-soft); border-top:2px solid var(--s1); border-bottom-color:var(--s1)}
+tr.merge:hover td{background:var(--s1-soft)}
+td.evt{color:var(--s1); font-weight:600; font-size:11px; letter-spacing:.05em; text-align:left}
+td.part,.part{color:var(--faint)}
+td.rel{color:var(--muted); font-size:11.5px; text-align:left}
+.scroll-y{max-height:500px; overflow-y:auto}
+
+details{background:var(--surface); border:1px solid var(--line); border-radius:3px}
+summary{padding:13px 16px; cursor:pointer; font-size:12px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+details[open] summary{border-bottom:1px solid var(--line)}
+.details-body{padding:16px; display:flex; flex-direction:column; gap:12px}
+.details-body p,.details-body li{font-size:12.5px; line-height:1.68; color:var(--muted)}
+.details-body strong{color:var(--ink)}
+ul{margin:0; padding-left:1.15em; display:flex; flex-direction:column; gap:7px}
+code{background:var(--surface-2); border:1px solid var(--line); border-radius:2px; padding:.5px 4px; font-size:.93em}
+footer{border-top:1px solid var(--line); padding-top:18px; font-size:11.5px; color:var(--faint); line-height:1.7}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="rec">
+  <div class="kicker">oven-sh/bun &middot; PR #30412 &middot; a study of 2,981 issues across 39 weeks</div>
+  <h1>A million lines of AI-assisted Rust, merged as one pull request. What happened to the bug reports?</h1>
+  <p class="lede prose">On 14 May 2026 Bun replaced its Zig runtime with a Rust one in a single merge — 1,009,257 added lines, 2,188 files, six days from open to merge. This is an attempt to measure what that did to the project's defect reports, using the canary channel as a controlled before/after and the untouched stable branch as a control group.</p>
+  <dl class="fields">
+    <div><dt>The rewrite</dt><dd><a href="https://github.com/oven-sh/bun/pull/30412">PR #30412</a></dd></div>
+    <div><dt>Merged</dt><dd>2026-05-14 08:09 UTC</dd></div>
+    <div><dt>Diff</dt><dd>+1,009,257 / −4,024</dd></div>
+    <div><dt>Files / commits</dt><dd>2,188 / 6,755</dd></div>
+    <div><dt>Branch</dt><dd>claude/phase-a-port</dd></div>
+    <div><dt>Window studied</dt><dd>13 Nov 25 → 10 Aug 26</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>What was merged</h2>
+  <div class="cards">
+    <div class="card">
+      <span class="tag">Scale</span>
+      <h3>Six days, 6,755 commits</h3>
+      <p>Opened 8 May 2026, merged on the 14th. A <strong>1,009,257-line</strong> addition against 4,024 deletions across 2,188 files — the runtime rewritten in a different language, landing in one merge rather than incrementally.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Authorship</span>
+      <h3>Branch <code>claude/phase-a-port</code></h3>
+      <p>Confirmed, not inferred: Sumner's <a href="https://bun.com/blog/bun-in-rust">retrospective</a> (8 Jul 2026) says the port ran as <strong>~50 parallel Claude Code workflows</strong> on a pre-release Claude model — <strong>11 days end-to-end, ~$165,000 at API pricing</strong>, peaking near 1,300 lines a minute, against his one-year estimate for a human team. The <code>claude/*</code> branch prefix is the repo's standing convention (7,469 of 18,528 PRs carry the <code>claude</code> label). Disclosure that belongs beside every claim in that post: <strong>Anthropic acquired Bun in December 2025</strong>.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Throughput</span>
+      <h3>Merge rate nearly tripled</h3>
+      <p>Merged pull requests went from <strong>45.7/week</strong> in the six months before to <strong>126.1/week</strong> after — ×2.76. The AI-labelled share rose from 55.5% to <strong>75.0%</strong>. The rewrite changed the development mode, not just the language.</p>
+    </div>
+  </div>
+  <figure style="gap:10px">
+    <h3>In the author's words, on the day it merged</h3>
+    <p class="prose" style="font-size:14px; line-height:1.7; color:var(--muted); border-left:2px solid var(--s1); padding-left:14px; max-width:74ch">
+      “It passes Bun's pre-existing test suite on all platforms … the binary size shrinks by 3&nbsp;MB&nbsp;–&nbsp;8&nbsp;MB, the benchmarks are between neutral and faster … To try this, run <code>bun upgrade --canary</code>. <strong>Please do file issues if you run into any.</strong> … Still some optimization work to do before this lands in non-canary version.”
+    </p>
+    <figcaption>Three things in that note shape everything below: the Rust build shipped to <em>canary only</em>, stable was explicitly deferred, and users were <em>asked</em> to file issues — which is itself a reason canary reports would rise. The promised details post landed on 8 July 2026 (<a href="https://bun.com/blog/bun-in-rust">bun.com/blog/bun-in-rust</a>) and is taken up in section 5.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Findings</h2>
+  <div class="stats">
+    <div class="stat key">
+      <span class="lbl">Canary bug reports / week</span>
+      <span class="big num">5.9 → 20.7</span>
+      <span class="tick t-move num">×3.5 · ×2.2 vs the final quarter</span>
+      <span class="sub">154 in 26 weeks of Zig canary, 248 in 12 weeks of Rust canary</span>
+    </div>
+    <div class="stat key">
+      <span class="lbl">Canary fix rate<br>(share ever closed as fixed)</span>
+      <span class="big num">43.5 → 41.9%</span>
+      <span class="tick t-flat num">−1.6 pt · unchanged</span>
+      <span class="sub">67 fixed before, 104 after</span>
+    </div>
+    <div class="stat key">
+      <span class="lbl">Canary bugs fixed within 30 days</span>
+      <span class="big num">18.8 → 30.4%</span>
+      <span class="tick t-flat num">+11.6 pt · faster</span>
+      <span class="sub">Canary is now where the work happens, not a side branch</span>
+    </div>
+    <div class="stat">
+      <span class="lbl">Stable-only bug reports / week<br>(the unchanged 1.3.x code)</span>
+      <span class="big num">45.8 → 31.5</span>
+      <span class="tick t-move num">−31.2%</span>
+      <span class="sub">Attention moved off the branch users are still running</span>
+    </div>
+    <div class="stat">
+      <span class="lbl">All bug reports / week</span>
+      <span class="big num">69.3 → 68.9</span>
+      <span class="tick t-flat num">−0.6% · two moves cancelling</span>
+      <span class="sub">The repo-wide total is the least informative number here</span>
+    </div>
+    <div class="stat">
+      <span class="lbl">Stable releases / month</span>
+      <span class="big num">2.01 → 0</span>
+      <span class="tick t-move num">89-day drought, still running</span>
+      <span class="sub">Longest prior gap since 2024: 27 days</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>1 &mdash; Canary bugs in, fixes out</h2>
+  <div class="figwrap">
+    <figure>
+      <div class="figtop">
+        <h3>Bug reports naming a canary build, per week, and how many have since been fixed</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--s2)"></i>Closed as fixed</span>
+          <span><i class="swatch" style="background:var(--s1)"></i>Duplicate, not planned, or still open</span>
+          <span><i class="swatch" style="background:var(--muted);width:2px;height:12px;border-radius:1px"></i>Stable release</span>
+        </div>
+      </div>
+      <div class="chartbox"><svg id="chartC" role="img" aria-label="Stacked column chart of Bun bug reports naming a canary build, per week, with a stable-release tick strip below. Before the May 2026 rewrite these are Zig canary builds averaging 5.9 a week; after, they are Rust canary builds averaging 20.7 a week. The fixed portion holds at roughly 42 percent throughout, while stable releases stop entirely at the merge."></svg></div>
+      <figcaption>A report counts here if its text names a canary build — <code>1.3.x-canary</code> before the merge, <code>1.4.x</code> after. The version lineage switches cleanly at the cut: not a single pre-merge issue names a 1.4.x <em>Bun</em> build (a plain version-string match finds nine, every one a library version like elysia 1.4.x), and <code>1.3.x-canary</code> mentions stop within a week of the merge. Dashed rules are the period means for reports opened and for reports since fixed. The strip below marks every <em>stable</em> release — canary itself is a rolling tag with no per-build release entry, so the ticks show what reached ordinary users, which since the merge is nothing.</figcaption>
+    </figure>
+    <div class="tip" id="tipC" role="status"></div>
+  </div>
+</section>
+
+<section class="prose">
+  <p>This is the comparison that isolates the rewrite. Both sides are the same distribution channel and roughly the same kind of user — people who deliberately run pre-release Bun. The only thing that changes at the cut is the language the runtime is written in, because the Rust port went straight into canary and has never left it. The version strings confirm the handover is clean: not one pre-merge issue names a 1.4.x Bun build, and <code>1.3.x-canary</code> mentions stop within a week after the merge.</p>
+  <p>Through that channel, bug reports went from <strong>5.9 a week to 20.7</strong> — 3.5× against the full pre-window, or <strong>2.2×</strong> against the busier final quarter before the merge, which is the conservative read. Fixes kept pace: <strong>41.9%</strong> of Rust-canary bug reports have been closed as fixed against <strong>43.5%</strong> of Zig-canary ones, and 8.7 a week are now being fixed against 2.6 before. The share fixed within 30 days of filing actually improved, from 18.8% to 30.4% — Zig canary was a side branch where reports could sit for months; Rust canary is the mainline.</p>
+  <p><strong>What this cannot separate is how many people are reporting.</strong> Two things changed at the cut besides the language. Canary became the only way to get the Rust build, so the population behind those 20.7 reports a week is almost certainly larger than the population behind 5.9. And the PR asked for reports in as many words — <em>“Please do file issues if you run into any”</em> — which lifts the reporting rate independently of how many defects exist. Report volume is exposure × defect density × willingness to report, and only the product is observable. A ×2.2–3.5 rise is therefore an upper bound on any rise in defect density, not a measurement of it.</p>
+  <p>The ratios are the sturdier half of the finding. Fix rate and fix latency don't depend on how many people are looking: <strong>41.9% against 43.5%</strong>, with 30-day resolution improving. Whatever the Rust port is generating, the team is clearing it at the rate it always did — while merging 126 pull requests a week against 46 before.</p>
+</section>
+
+<section>
+  <h2>2 &mdash; The two populations diverge</h2>
+  <div class="figwrap">
+    <figure>
+      <div class="figtop">
+        <h3>All bug reports per week, split by the build they name</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--s1)"></i>Canary build</span>
+          <span><i class="swatch" style="background:var(--s2)"></i>Stable 1.3.x only</span>
+          <span><i class="swatch" style="background:var(--unk)"></i>No version stated</span>
+        </div>
+      </div>
+      <div class="chartbox"><svg id="chartS" role="img" aria-label="Stacked column chart of all Bun bug reports per week split into canary builds, stable 1.3.x builds, and reports with no version stated. Total height stays roughly flat across the May 2026 rewrite while the canary band grows from 8 percent to 30 percent and the stable band shrinks."></svg></div>
+      <figcaption>Bar height is total bug reports; bands are the build named in the report text. Canary went from 8.4% of reports to 29.7% while stable-only fell from 66.2% to 45.9%. The unclassified share barely moves (25.4% → 24.3%), so the classifier isn't drifting across the cut.</figcaption>
+    </figure>
+    <div class="tip" id="tipS" role="status"></div>
+  </div>
+</section>
+
+<section class="prose">
+  <p>The repo-wide total is motionless — 69.3 a week before, 68.9 after — and that is the least informative number in this study. It holds still because two populations moved in opposite directions by almost exactly the same amount: canary reports rose by 14.8 a week, and reports naming only a stable 1.3.x build fell by 14.3. Bun did not stop receiving bugs at the old rate; it stopped receiving them about the same code. Any analysis of this rewrite that stops at the repo total will conclude nothing happened.</p>
+  <p>The stable side is the natural control group. Nothing in <code>1.3.14</code> changed after 13 May — it is the same Zig binary every stable user is still running — and reports about it fell <strong>31.2%</strong>, with the fix rate slipping from 42.6% to 39.2%. That's what a codebase looks like when the people who maintain it have moved to something else.</p>
+</section>
+
+<section>
+  <h2>3 &mdash; Nothing has shipped</h2>
+  <div class="figwrap">
+    <figure>
+      <div class="figtop">
+        <h3>All bug reports and fixes per week, with every stable release marked</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--s2)"></i>Closed as fixed</span>
+          <span><i class="swatch" style="background:var(--s1)"></i>Duplicate, not planned, or still open</span>
+          <span><i class="swatch" style="background:var(--muted);width:2px;height:12px;border-radius:1px"></i>Stable release</span>
+        </div>
+      </div>
+      <div class="chartbox"><svg id="chartA" role="img" aria-label="Stacked column chart of all Bun bug reports opened per week split into since-fixed and not, with a release-tick strip below showing twelve releases before the rewrite and none in the 89 days after."></svg></div>
+      <figcaption>The last four weeks are shaded because their issues are under ~30 days old — their fixed counts are still rising and should not be read as a decline. Week +12 is partial (5 days) and excluded from every average.</figcaption>
+    </figure>
+    <div class="tip" id="tipA" role="status"></div>
+  </div>
+  <div class="cards">
+    <div class="card">
+      <span class="tag">Before</span>
+      <h3>12 releases in 182 days</h3>
+      <p><strong>2.01/month</strong>, median gap <strong>16 days</strong>: v1.3.3 through v1.3.14. Already a slowdown — the same calendar window a year earlier shipped <strong>25 releases</strong> at a 5-day median gap.</p>
+    </div>
+    <div class="card">
+      <span class="tag">After</span>
+      <h3>Zero releases in 88 days</h3>
+      <p>The newest stable tag is <strong>bun-v1.3.14, 13 May 2026</strong> — one day <em>before</em> #30412 landed. The longest gap between any two Bun releases in all of 2024–2026 was <strong>27 days</strong>, against a median of 8. The current gap is <strong>89 days</strong> and open-ended.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Consequence</span>
+      <h3>The user base is split in two</h3>
+      <p>Everyone on stable is running Zig code that is no longer being actively fixed; everyone on canary is running Rust code that cannot be installed by default. On the evidence here the rewrite's measurable cost so far is not a defect spike — it's that the two halves of the user base have been on different runtimes for three months, exactly as the PR said they would be until the optimization work lands.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>4 &mdash; The debate this case lands in</h2>
+  <p class="prose">The hypothesis this study set out against: <em>Rust's whole-language rigidity and complexity — borrow checker, lifetimes, trait system, syntax, static types included — make it badly suited to everyday development, where tasks are rarely precisely defined and unexpected cases demand flexibility.</em> That position is neither fringe nor strawman. It is held by senior practitioners with serious Rust mileage, by the designers of Go and of Zig — the language Bun left — and, in part, by Rust's own creator. The production record at scale points the other way. Every quote below was fetched from its source and verified on 10 Aug 2026.</p>
+  <div class="cards">
+    <div class="card">
+      <span class="tag">The case that rigidity hurts</span>
+      <div class="qlist">
+        <div class="q"><span class="qt prose">&ldquo;&hellip;the borrow checker <em>forces</em> a refactor at the most inconvenient times.&rdquo;</span><span class="qa"><b><a href="https://loglog.games/blog/leaving-rust-gamedev/">LogLog Games</a></b> — 3+ yrs full-time Rust, 100k+ lines, shipped games (2024). A section title in the same essay: &ldquo;Making a fun &amp; interesting games is about rapid prototyping and iteration, Rust's values are everything but that.&rdquo;</span></div>
+        <div class="q"><span class="qt prose">&ldquo;He's right about the pain of refactoring and the difficulties of interconnecting different parts of the program. It's quite common for some change to require extensive plumbing work.&rdquo;</span><span class="qa"><b><a href="https://news.ycombinator.com/item?id=40172952">John Nagle</a></b> — five decades of systems engineering, ~45k lines of safe Rust on a metaverse client; adds that the C#/Unity teams on the same problem make faster progress.</span></div>
+        <div class="q"><span class="qt prose">Rust's own creator writes that shipped Rust is far from the language he wanted — he argued against explicit lifetimes, first-class borrows and the trait system as costing more cognition than they return — while conceding his simpler Rust &ldquo;had no future.&rdquo;</span><span class="qa"><b><a href="https://graydon2.dreamwidth.org/307291.html">Graydon Hoare</a></b>, &ldquo;The Rust I Wanted Had No Future&rdquo; (2023) — paraphrased; the post resisted re-fetching for verbatim quotation.</span></div>
+        <div class="q"><span class="qt prose">&ldquo;The key point here is our programmers are Googlers, they're not researchers&hellip; They're not capable of understanding a brilliant language but we want to use them to build good software.&rdquo;</span><span class="qa"><b>Rob Pike</b> — co-creator of Go and Plan 9, on Go's design rationale (<a href="https://bravenewgeek.com/go-is-unapologetically-flawed-heres-why-we-use-it/">as quoted</a>); his 2012 essay &ldquo;<a href="https://commandcenter.blogspot.com/2012/06/less-is-exponentially-more.html">Less is exponentially more</a>&rdquo; treats feature-count as the disease, not the cure.</span></div>
+        <div class="q"><span class="qt prose">&ldquo;One finds oneself debugging one's knowledge of the programming language instead of debugging the application itself.&rdquo;</span><span class="qa"><b><a href="https://ziglang.org/learn/why_zig_rust_d_cpp/">Zig's official design rationale</a></b>, naming Rust's feature volume directly — the stated philosophy of the language Bun walked away from.</span></div>
+        <div class="q"><span class="qt prose">In the Rust project's own 2023 survey, the top worry for the language's future was <b>&ldquo;Rust becoming too complex&rdquo; — 43%</b> of 9,374 respondents, up 5 points on the year; still top-of-list in 2024.</span><span class="qa"><b><a href="https://blog.rust-lang.org/2024/02/19/2023-Rust-Annual-Survey-2023-results/">Rust Annual Survey</a></b> — the complexity worry is loudest among Rust's own users.</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <span class="tag" style="color:var(--s2)">The case that rigidity pays</span>
+      <div class="qlist">
+        <div class="q c2"><span class="qt prose">&ldquo;For medium and large changes, the rollback rate of Rust changes in Android is ~4x lower than C++.&rdquo; Rust changes also spend ~25% less time in review, need ~20% fewer revisions, and show &ldquo;a 1000x reduction in memory safety vulnerability density&rdquo; versus Android's C and C++.</span><span class="qa"><b><a href="https://blog.google/security/rust-in-android-move-fast-fix-things/">Google, Android (Nov 2025)</a></b> — production data at one of the largest codebases in existence.</span></div>
+        <div class="q c2"><span class="qt prose">&ldquo;In every case we've seen a decrease by more than 2x in the amount of effort required to both build the services in Rust as well as maintain and update those services&hellip;&rdquo;</span><span class="qa"><b><a href="https://www.theregister.com/2024/03/31/rust_google_c/">Lars Bergstrom</a></b> — Google engineering director, ex-lead of Mozilla's Servo. Google's <a href="https://opensource.googleblog.com/2023/06/rust-fact-vs-fiction-5-insights-from-googles-rust-journey-2022.html">survey of 1,000+ of its Rust developers</a> found no productivity penalty vs their prior language, most reaching parity within four months.</span></div>
+        <div class="q c2"><span class="qt prose">&ldquo;Rust has been a force multiplier for our team, and betting on Rust was one of the best decisions we made. More than performance, its ergonomics and focus on correctness has helped us tame sync's complexity.&rdquo;</span><span class="qa"><b><a href="https://dropbox.tech/infrastructure/rewriting-the-heart-of-our-sync-engine">Dropbox</a></b> — who chose Rust precisely for their most edge-case-ridden component, setting compiler-checked invariants against a state space they call &ldquo;astronomical.&rdquo;</span></div>
+        <div class="q c2"><span class="qt prose">&ldquo;Rust, by design, makes certain programming patterns more painful than others. This is a GOOD thing!&rdquo;</span><span class="qa"><b><a href="https://kyren.github.io/2018/09/14/rustconf-talk.html">Catherine West</a></b> — Starbound's lead programmer, RustConf 2018 keynote: from inside gamedev, the patterns Rust punishes are the ones that hurt games in any language.</span></div>
+        <div class="q c2"><span class="qt prose">&ldquo;Rust's ubiquitous Option type allows for sentinel values to be eliminated from one's code &ndash; and with it some significant fraction of defects.&rdquo;</span><span class="qa"><b><a href="http://bcantrill.dtrace.org/2020/10/11/rust-after-the-honeymoon/">Bryan Cantrill</a></b> — DTrace co-inventor, ~30 years of production C before Oxide bet its stack on Rust.</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="prose">
+    <p>What is striking is that the two camps agree on where the boundary sits. The fiercest critique concedes it: &ldquo;Rust fits very nicely in the low level algorithmic areas where one knows exactly what the problem is and just needs to solve it&rdquo; (LogLog Games, the same essay). An ex-AAA engine developer in the same thread: &ldquo;Rust excels when you know what you want to build&hellip; Once you get up in game logic/behavior that iteration loop is so dynamic that you are prototyping more than developing.&rdquo; The disagreement is not really about Rust. It is about which regime the work lives in. The complexity tax is front-loaded — paid during exploration, while requirements churn. The strictness dividend is back-loaded — collected in production, as defect classes that never ship. Which side of the ledger dominates depends on how much of the work is exploration and how much is execution against a known spec.</p>
+    <p>Two scope notes keep this honest. Zig is also a statically-typed, compiled language — so this case measures the increment of <em>ownership, lifetimes and traits</em>, not &ldquo;static versus dynamic typing,&rdquo; and the static-typing literature is left out of this discussion as a different question. And a JavaScript runtime that embeds JavaScriptCore over FFI keeps a substantial <code>unsafe</code> surface where the borrow checker's guarantees lapse — &ldquo;use-after-free becomes a compile error&rdquo; is a property of safe Rust, not of the FFI boundary where much of a runtime's hottest code lives.</p>
+  </div>
+</section>
+
+<section>
+  <h2>5 &mdash; The AI variable</h2>
+  <p class="prose">The rigidity argument has always been an argument about <em>human</em> iteration speed — the cost of fighting the compiler while exploring. This rewrite changes who does the fighting. Per Sumner's retrospective and press reporting: ~50 parallel Claude Code workflows on a pre-release Claude model, 11 days end-to-end, ~$165,000 at API pricing, a peak near 1,300 lines a minute, 100% of the test suite passing — against his estimate of &ldquo;a small team of engineers a full year.&rdquo; (Disclosure, his and ours: Anthropic acquired Bun in December 2025, and this study was itself researched and written with Claude.)</p>
+  <div class="qlist">
+    <div class="q c2"><span class="qt prose">&ldquo;A large percentage of bugs from that list are use-after-free, double-free, and &lsquo;forgot to free&rsquo; in an error path. In safe Rust, these are compiler errors&hellip; Compiler errors are a better feedback loop than a style guide.&rdquo;</span><span class="qa"><b><a href="https://bun.com/blog/bun-in-rust">Jarred Sumner</a></b> — the rewrite's thesis: strictness as machine-checkable guardrails for machine-written code.</span></div>
+    <div class="q c2"><span class="qt prose">&ldquo;A language-independent test suite with a million assertions, adversarial code review and when something does go wrong, fixing the process that generates the code instead of hand-fixing the code.&rdquo;</span><span class="qa"><b><a href="https://simonwillison.net/2026/Jul/8/rewriting-bun-in-rust/">Simon Willison</a></b> — ~25 years, Django co-creator; judges the port a success but credits the <em>verification harness</em>, not the language.</span></div>
+    <div class="q"><span class="qt prose">&ldquo;If you do put the type check into the loop, my tests actually showed worse performance. That's because the agent manages to get the code running, and only after it's done does it run the type check.&rdquo;</span><span class="qa"><b><a href="https://lucumr.pocoo.org/2025/8/4/shitty-types/">Armin Ronacher</a></b> — Flask's creator, ~20 years, long-time production Rust user — the credible dissent: his hands-on agent tests favor loose, &ldquo;best-effort&rdquo; typing, and he recommends Go, not Rust, for agentic coding.</span></div>
+    <div class="q"><span class="qt prose">&ldquo;It's not sufficient to catch bugs in Zig code but it is sufficient to catch bugs in [a] million lines of unreviewed slop?&rdquo;</span><span class="qa"><b><a href="https://andrewkelley.me/post/my-thoughts-bun-rust-rewrite.html">Andrew Kelley</a></b> — Zig's creator, reacting to the rewrite; he explicitly rejects the language framing: &ldquo;The main issue here had nothing to do with the language features of Zig vs Rust, and everything to do with the diverging value systems of the two projects and the relationship breakdown that followed.&rdquo;</span></div>
+  </div>
+  <div class="prose">
+    <p>The peer-reviewed evidence leans Sumner's way on the narrow question: constraining LLM decoding with type-system rules cuts compilation errors by more than half (ETH Zürich / UC Berkeley, PLDI 2025), and an LLM iterating against <code>rustc</code>'s error messages fixes roughly 74% of real-world compile errors unaided (Microsoft Research, ICSE 2025). In an agent loop, the strict compiler converges instead of blocking. Against that stand Ronacher's hands-on results — and Kelley's objection, which is not about Rust at all: compilation proves the absence of certain bug classes, not the presence of understanding. Nobody has read the million lines.</p>
+    <p>This study's numbers adjudicate a little of both. The language did not become the bottleneck — bug-fix throughput held at pre-rewrite rates against triple the canary report volume, with 2.76&times; the merge rate. The <em>human</em> loop did: triage collapsed and nothing has shipped to stable in 89 days. Machines absorbed the complexity tax. Humans kept the verification bill.</p>
+  </div>
+</section>
+
+<section>
+  <h2>6 &mdash; Conclusions</h2>
+  <ol class="verdict prose">
+    <li><strong>On its own numbers, the rewrite was neither catastrophe nor triumph.</strong> Canary bug reports rose &times;2.2&ndash;3.5 (confounded by exposure and explicit solicitation), the fix rate held (43.5% &rarr; 41.9%), the stable branch's reports fell by a third as attention left it, and no stable release has shipped in 89 days.</li>
+    <li><strong>The rigidity-and-complexity critique of Rust is real, credible — and regime-dependent.</strong> Its best-sourced form comes from veterans with serious Rust mileage, from the designers of Go and Zig, and in part from Rust's own creator; the Rust project's own survey makes &ldquo;becoming too complex&rdquo; its users' top worry. The supporting evidence concentrates where requirements churn: prototypes, games, early products, exploratory work.</li>
+    <li><strong>In the opposite regime — a known spec, executed at scale — the production data contradicts it</strong>, and not narrowly: 4&times; lower rollback rates, 2&times; lower maintenance effort, no measured productivity penalty across a thousand Google developers. Even the critics concede this boundary; even the advocates concede the ramp.</li>
+    <li><strong>Bun's rewrite cannot arbitrate the hypothesis, because it sits entirely in Rust's home regime.</strong> A port against a million-assertion conformance suite is the most spec-frozen project imaginable — the exact condition under which critics and advocates agree Rust excels — and its FFI-heavy core keeps a large <code>unsafe</code> surface outside the borrow checker's guarantees. Kelley's counter-hypothesis (culture, not language: stable Zig projects exist) also survives this data untouched. Anyone citing this rewrite as proof about Rust for <em>everyday, vaguely-specified</em> development — in either direction — is overclaiming.</li>
+    <li><strong>What this case does show is the complexity ledger being redrawn.</strong> When ~50 agent workflows write the million lines, the rigidity that taxed human iteration becomes machine-checkable guardrails on machine-written code — and the binding constraint moves to the humans who must review, triage and ship it. That is precisely where this project stalled. The open question the next six months will answer is not whether Rust's strictness suits AI-scale development, but whether human verification can keep up with it.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Period averages</h2>
+  <div class="tablebox">
+    <table>
+      <thead><tr>
+        <th>Period</th><th>Weeks</th><th colspan="2">Canary</th><th colspan="2">Stable 1.3.x only</th><th colspan="2">All bug reports</th><th>Releases/mo</th>
+      </tr>
+      <tr>
+        <th></th><th></th><th>per wk</th><th>fix rate</th><th>per wk</th><th>fix rate</th><th>per wk</th><th>fix rate</th><th></th>
+      </tr></thead>
+      <tbody>
+        <tr><td>Pre-rewrite baseline</td><td class="num">−26 … −1</td><td class="num">5.92</td><td class="num">43.5%</td><td class="num">45.77</td><td class="num">42.6%</td><td class="num">69.31</td><td class="num">40.8%</td><td class="num">2.01</td></tr>
+        <tr><td class="part">…final quarter only</td><td class="num part">−13 … −1</td><td class="num part">9.38</td><td class="num part">41.8%</td><td class="num part">48.15</td><td class="num part">42.0%</td><td class="num part">69.62</td><td class="num part">42.3%</td><td class="num part">1.67</td></tr>
+        <tr class="merge"><td colspan="9" class="evt">▼ PR #30412 — Rewrite Bun in Rust — merged 2026-05-14 08:09 UTC · canary switches from 1.3.x to 1.4.x</td></tr>
+        <tr><td>Post-rewrite, month 1</td><td class="num">0 … 3</td><td class="num">21.75</td><td class="num">47.1%</td><td class="num">32.50</td><td class="num">30.0%</td><td class="num">80.50</td><td class="num">38.5%</td><td class="num">0</td></tr>
+        <tr><td>Post-rewrite, month 2</td><td class="num">4 … 7</td><td class="num">21.00</td><td class="num">41.7%</td><td class="num">31.75</td><td class="num">42.5%</td><td class="num">66.25</td><td class="num">41.1%</td><td class="num">0</td></tr>
+        <tr><td>Post-rewrite, month 3</td><td class="num">8 … 11</td><td class="num">19.25</td><td class="num">36.4%</td><td class="num">30.25</td><td class="num">45.5%</td><td class="num">60.00</td><td class="num">39.6%</td><td class="num">0</td></tr>
+        <tr><td><strong>Post-rewrite, all</strong></td><td class="num">0 … 11</td><td class="num"><strong>20.67</strong></td><td class="num"><strong>41.9%</strong></td><td class="num"><strong>31.50</strong></td><td class="num"><strong>39.2%</strong></td><td class="num"><strong>68.92</strong></td><td class="num"><strong>39.7%</strong></td><td class="num"><strong>0</strong></td></tr>
+        <tr><td>Change vs baseline</td><td>—</td><td class="num">×3.49</td><td class="num">−1.6 pt</td><td class="num">−31.2%</td><td class="num">−3.4 pt</td><td class="num">−0.6%</td><td class="num">−1.1 pt</td><td class="num">−100%</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Every week</h2>
+  <div class="tablebox scroll-y">
+    <table>
+      <thead><tr>
+        <th>Wk</th><th>Week starting</th><th>Canary</th><th>fixed</th><th>Stable only</th><th>fixed</th><th>No version</th><th>All bugs</th><th>Release</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <details>
+    <summary>Method, definitions and limits</summary>
+    <div class="details-body">
+      <p><strong>Source.</strong> All 2,981 issues (pull requests excluded by construction) created in <code>oven-sh/bun</code> between 2025-11-13 and 2026-08-10, pulled via the GitHub GraphQL API with <code>createdAt</code>, <code>closedAt</code>, <code>state</code>, <code>stateReason</code>, labels, author and body text. Release dates come from the Releases API — all 214 are marked non-prerelease. Totals were cross-checked against the Search API. The frozen snapshot, every analysis script, and an independent verification script that re-derives all 31 published figures from that snapshot live in the <a href="https://github.com/asmyshlyaev177/bun-rust-rewrite-analysis">companion repository</a>.</p>
+      <p><strong>Binning.</strong> Weeks are 7×86400s bins anchored to the merge timestamp rather than to calendar weeks, so week −1 is the last seven days before the rewrite and week 0 the first seven after. Week −26 begins 2025-11-13, six months before the merge. Week +12 covers five days and is excluded from every average.</p>
+      <p><strong>What counts as a bug report.</strong> Every issue <em>not</em> labelled <code>enhancement</code>, <code>docs</code>, <code>idea</code>, <code>question</code>, <code>chore</code>, <code>duplicate</code>, <code>invalid</code> or <code>wontfix</code> — 1,802 before the rewrite and 827 after. Whether an issue was triaged is irrelevant; only that it was opened. The <code>bug</code> label is deliberately not used as the definition, because label coverage collapsed across the cut (unlabelled share went from 0–3% in November 2025 to 50–63% after the rewrite), so a <code>bug</code>-label count measures triage effort rather than defect reports.</p>
+      <p><strong>Which build a report is about.</strong> Classified from version strings in the title and body — Bun's issue template asks for <code>bun --revision</code>, so most reports carry one. <em>Canary</em> = the text matches <code>1.3.x-canary</code> (Zig canary) or <code>1.4.x</code> (the Rust line, which has never had a stable release). <em>Stable only</em> = matches <code>1.3.x</code> with no canary suffix and no 1.4.x mention. <em>No version stated</em> = neither. Coverage is stable across the cut — 25.4% unclassified before, 24.3% after — so the split is not an artifact of reporting habits changing. <em>Robustness:</em> a stricter classifier that only accepts a 1.4.x token carrying canary/debug/a build hash, or sitting within 80 characters of bun/version/revision, moves the counts from 154→147 pre and 248→246 post, leaves both fix rates unchanged to one decimal, and <em>raises</em> the volume ratio from ×3.49 to ×3.63 — the published looser rule is the conservative choice. The false matches are library versions (elysia 1.4.x, tw-animate-css 1.4.0, WCAG criterion 1.4.3), and in a 25-issue random sample of post-rewrite canary classifications, 23 were the reporter's own <code>bun --revision</code> output.</p>
+      <p><strong>What counts as fixed.</strong> GitHub's <code>stateReason</code> of <code>COMPLETED</code> on a closed issue. The 19 issues closed and later reopened count as open, not fixed. Headline fix rates compare final states as of the pull date, which penalises the younger cohort; the 30-day figures ask the same question of every week — what share was fixed within 30 days — over weeks old enough to answer it.</p>
+      <p><strong>The limit that matters most.</strong> Report volume is exposure × defect density × willingness to report, and only the product is observable. Two of those three terms changed at the cut independently of the code: canary became the only route to the Rust build, and the PR explicitly solicited reports (<em>“Please do file issues if you run into any”</em>). The ×2.2–3.5 rise in canary reports is therefore an upper bound on any rise in defect density, not a measurement of it. The ratios — fix rate, fix latency — are population-independent and are the sturdier half of the analysis. Severity is unweighted throughout: a segfault and a typo count the same.</p>
+      <p><strong>On calling the rewrite AI-assisted.</strong> Initially inferred from convention (the <code>claude/phase-a-port</code> branch; 7,469 of the repo's 18,528 PRs carry a <code>claude</code> label, 75% of everything merged since the rewrite), later confirmed directly: Sumner's 8 July 2026 retrospective states the port used a pre-release Claude model across ~50 parallel Claude Code workflows, and The Register reports 11 days and ~$165,000 at API pricing. Disclosures that cut in both directions: Anthropic acquired Bun in December 2025, and this study was itself researched and written with Claude.</p>
+      <p><strong>On the quotes in sections 4&ndash;6.</strong> Every quotation was fetched from its source URL and verified verbatim on 10 Aug 2026, with one exception: Graydon Hoare's Dreamwidth post resisted re-fetching and is paraphrased, never quoted. Authors were included only where the page or an easily-found bio evidences roughly five or more years of professional software experience; institutional data (Google, Microsoft, Dropbox, the Rust surveys, peer-reviewed papers) is cited as data rather than opinion. The static-vs-dynamic-typing literature was researched and deliberately excluded: Zig and Rust are both statically typed, so that debate is orthogonal to this case.</p>
+      <ul>
+        <li><strong>Small pre-rewrite canary counts.</strong> 154 issues over 26 weeks, several weeks at zero or one, with spikes of 24 and 25 in late March and early April 2026. The ×2.2 figure against the busier final quarter is the conservative comparison; ×3.5 against the full window is the loose one.</li>
+        <li><strong>Right-censoring.</strong> Recent issues have had less time to be fixed, which depresses every post-period disposition count. The last four weeks are shaded in the charts for that reason, and month 3 is omitted from 30-day figures.</li>
+        <li><strong>Pre-window skew.</strong> Weeks −26 and −25 sit on the Bun 1.3.0/1.3.1/1.3.2 release wave (137 and 159 issues) and lift the pre-rewrite aggregate mean; the final-quarter row is given for comparison.</li>
+        <li><strong>Data pulled 2026-08-10.</strong> Figures for the final weeks will drift as late fixes land.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<footer>
+  Built from the GitHub API on 2026-08-10 · 2,981 issues over 39 weekly bins · 2,629 bug reports, 402 identifiably canary · 12 releases · 2,772 merged pull requests · <a href="https://github.com/oven-sh/bun/pull/30412">oven-sh/bun#30412</a> · <a href="https://github.com/asmyshlyaev177/bun-rust-rewrite-analysis">data &amp; scripts</a>
+</footer>
+
+</div>
+
+<script>
+const D=[{"w":-26,"start":"2025-11-13","bug":122,"bfix":43,"can":6,"canF":4,"sta":58,"staF":24,"unk":58,"rel":[]},{"w":-25,"start":"2025-11-20","bug":147,"bfix":33,"can":1,"canF":0,"sta":60,"staF":15,"unk":86,"rel":["1.3.3"]},{"w":-24,"start":"2025-11-27","bug":90,"bfix":18,"can":3,"canF":1,"sta":33,"staF":7,"unk":54,"rel":[]},{"w":-23,"start":"2025-12-04","bug":52,"bfix":22,"can":2,"canF":2,"sta":41,"staF":15,"unk":9,"rel":["1.3.4"]},{"w":-22,"start":"2025-12-11","bug":35,"bfix":14,"can":0,"canF":0,"sta":29,"staF":12,"unk":6,"rel":["1.3.5"]},{"w":-21,"start":"2025-12-18","bug":48,"bfix":19,"can":2,"canF":1,"sta":43,"staF":17,"unk":3,"rel":[]},{"w":-20,"start":"2025-12-25","bug":37,"bfix":16,"can":4,"canF":2,"sta":29,"staF":13,"unk":4,"rel":[]},{"w":-19,"start":"2026-01-01","bug":40,"bfix":19,"can":2,"canF":1,"sta":30,"staF":15,"unk":8,"rel":[]},{"w":-18,"start":"2026-01-08","bug":61,"bfix":30,"can":1,"canF":0,"sta":48,"staF":26,"unk":12,"rel":["1.3.6"]},{"w":-17,"start":"2026-01-15","bug":65,"bfix":32,"can":2,"canF":1,"sta":57,"staF":31,"unk":6,"rel":[]},{"w":-16,"start":"2026-01-22","bug":60,"bfix":31,"can":5,"canF":1,"sta":50,"staF":30,"unk":5,"rel":["1.3.7"]},{"w":-15,"start":"2026-01-29","bug":60,"bfix":28,"can":3,"canF":3,"sta":50,"staF":22,"unk":7,"rel":["1.3.8"]},{"w":-14,"start":"2026-02-05","bug":80,"bfix":48,"can":1,"canF":0,"sta":36,"staF":17,"unk":43,"rel":["1.3.9"]},{"w":-13,"start":"2026-02-12","bug":49,"bfix":20,"can":7,"canF":3,"sta":39,"staF":15,"unk":3,"rel":[]},{"w":-12,"start":"2026-02-19","bug":78,"bfix":42,"can":8,"canF":3,"sta":58,"staF":31,"unk":12,"rel":[]},{"w":-11,"start":"2026-02-26","bug":84,"bfix":37,"can":2,"canF":1,"sta":61,"staF":26,"unk":21,"rel":["1.3.10"]},{"w":-10,"start":"2026-03-05","bug":58,"bfix":24,"can":2,"canF":2,"sta":42,"staF":17,"unk":14,"rel":[]},{"w":-9,"start":"2026-03-12","bug":86,"bfix":41,"can":4,"canF":2,"sta":53,"staF":25,"unk":29,"rel":["1.3.11"]},{"w":-8,"start":"2026-03-19","bug":56,"bfix":17,"can":9,"canF":4,"sta":36,"staF":8,"unk":11,"rel":[]},{"w":-7,"start":"2026-03-26","bug":71,"bfix":36,"can":24,"canF":9,"sta":38,"staF":23,"unk":9,"rel":[]},{"w":-6,"start":"2026-04-02","bug":64,"bfix":26,"can":11,"canF":5,"sta":45,"staF":20,"unk":8,"rel":[]},{"w":-5,"start":"2026-04-09","bug":96,"bfix":44,"can":26,"canF":9,"sta":59,"staF":26,"unk":11,"rel":["1.3.12"]},{"w":-4,"start":"2026-04-16","bug":67,"bfix":25,"can":4,"canF":2,"sta":48,"staF":20,"unk":15,"rel":["1.3.13"]},{"w":-3,"start":"2026-04-23","bug":47,"bfix":20,"can":3,"canF":3,"sta":35,"staF":13,"unk":9,"rel":[]},{"w":-2,"start":"2026-04-30","bug":66,"bfix":28,"can":7,"canF":6,"sta":54,"staF":20,"unk":5,"rel":[]},{"w":-1,"start":"2026-05-07","bug":83,"bfix":23,"can":15,"canF":2,"sta":58,"staF":19,"unk":10,"rel":["1.3.14"]},{"w":0,"start":"2026-05-14","bug":113,"bfix":47,"can":32,"canF":21,"sta":40,"staF":12,"unk":41,"rel":[]},{"w":1,"start":"2026-05-21","bug":63,"bfix":27,"can":15,"canF":8,"sta":32,"staF":10,"unk":16,"rel":[]},{"w":2,"start":"2026-05-28","bug":51,"bfix":18,"can":13,"canF":5,"sta":31,"staF":9,"unk":7,"rel":[]},{"w":3,"start":"2026-06-04","bug":95,"bfix":32,"can":27,"canF":7,"sta":27,"staF":8,"unk":41,"rel":[]},{"w":4,"start":"2026-06-11","bug":99,"bfix":29,"can":35,"canF":11,"sta":45,"staF":12,"unk":19,"rel":[]},{"w":5,"start":"2026-06-18","bug":66,"bfix":31,"can":12,"canF":3,"sta":44,"staF":23,"unk":10,"rel":[]},{"w":6,"start":"2026-06-25","bug":64,"bfix":31,"can":21,"canF":11,"sta":26,"staF":13,"unk":17,"rel":[]},{"w":7,"start":"2026-07-02","bug":36,"bfix":18,"can":16,"canF":10,"sta":12,"staF":6,"unk":8,"rel":[]},{"w":8,"start":"2026-07-09","bug":59,"bfix":22,"can":12,"canF":4,"sta":33,"staF":11,"unk":14,"rel":[]},{"w":9,"start":"2026-07-16","bug":59,"bfix":25,"can":20,"canF":7,"sta":31,"staF":16,"unk":8,"rel":[]},{"w":10,"start":"2026-07-23","bug":65,"bfix":24,"can":27,"canF":8,"sta":31,"staF":14,"unk":7,"rel":[]},{"w":11,"start":"2026-07-30","bug":57,"bfix":24,"can":18,"canF":9,"sta":26,"staF":14,"unk":13,"rel":[]},{"w":12,"start":"2026-08-06","bug":33,"bfix":9,"can":13,"canF":3,"sta":11,"staF":3,"unk":9,"rel":[]}];
+const REL=[["2025-11-21","1.3.3"],["2025-12-07","1.3.4"],["2025-12-17","1.3.5"],["2026-01-13","1.3.6"],["2026-01-27","1.3.7"],["2026-01-29","1.3.8"],["2026-02-08","1.3.9"],["2026-02-26","1.3.10"],["2026-03-18","1.3.11"],["2026-04-10","1.3.12"],["2026-04-20","1.3.13"],["2026-05-13","1.3.14"]];
+const CENSOR_FROM=9;
+
+const NS='http://www.w3.org/2000/svg';
+const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e};
+const day=d=>(Date.parse(d+'T00:00:00Z')-Date.parse('2025-11-13T00:00:00Z'))/864e5;
+const capTop=(x,y,w,h,r)=>{r=Math.min(r,h,w/2);return `M${x},${y+h} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+w-r},${y} Q${x+w},${y} ${x+w},${y+r} L${x+w},${y+h} Z`};
+const pct=(a,b)=>b?Math.round(100*a/b)+'%':'—';
+
+/* ---------- table ---------- */
+let html='';
+for(const d of D){
+  if(d.w===0) html+='<tr class="merge"><td colspan="9" class="evt">▼ PR #30412 — Rewrite Bun in Rust — merged 2026-05-14 08:09 UTC · canary switches from 1.3.x to 1.4.x</td></tr>';
+  const p=(d.w===12?' part':''), cen=d.w>=CENSOR_FROM?' <span class="part">•</span>':'';
+  html+=`<tr><td class="num${p}">${d.w>0?'+'+d.w:d.w}</td><td class="${p.trim()}">${d.start}${d.w===12?' <span class="part">(5d)</span>':''}</td>`
+    +`<td class="num${p}">${d.can}</td><td class="num${p}">${d.canF}${cen}</td>`
+    +`<td class="num${p}">${d.sta}</td><td class="num${p}">${d.staF}${cen}</td>`
+    +`<td class="num${p}">${d.unk}</td><td class="num${p}">${d.bug}</td>`
+    +`<td class="rel">${d.rel.map(r=>'v'+r).join(' ')||'—'}</td></tr>`;
+}
+document.getElementById('tbody').innerHTML=html;
+
+/* ---------- generic weekly column chart ---------- */
+function chart(svgId,tipId,o){
+  const svg=document.getElementById(svgId), tip=document.getElementById(tipId);
+  const M=o.M, BAR=16, GAP=6, H=o.H;
+  const plotW=D.length*(BAR+GAP)-GAP, W=plotW+M.l+M.r, totalH=H+M.t+M.b;
+  const y=v=>M.t+H-(v/o.yMax)*H, x=i=>M.l+i*(BAR+GAP);
+  const xd=d=>M.l+(day(d)/7)*(BAR+GAP), base=y(0), cutX=xd('2026-05-14')-GAP/2;
+  svg.setAttribute('width',W); svg.setAttribute('height',totalH); svg.setAttribute('viewBox',`0 0 ${W} ${totalH}`);
+
+  const cenX=x(D.findIndex(d=>d.w===CENSOR_FROM))-GAP/2;
+  svg.appendChild(el('rect',{class:'censor',x:cenX,y:M.t-16,width:M.l+plotW-cenX,height:H+16}));
+  const ctg=el('text',{class:'censor-tag',x:M.l+plotW-4,y:M.t+13,'text-anchor':'end'});
+  ctg.textContent='under 30 days old'; svg.appendChild(ctg);
+
+  for(let v=0;v<=o.yMax-o.step;v+=o.step){
+    svg.appendChild(el('line',{class:'gridline',x1:M.l-6,x2:M.l+plotW,y1:y(v),y2:y(v)}));
+    const t=el('text',{class:'axis-lab',x:M.l-10,y:y(v)+3.5,'text-anchor':'end'}); t.textContent=v; svg.appendChild(t);
+  }
+  // stacked bands, bottom-up
+  D.forEach((d,i)=>{
+    const x0=x(i); let acc=0;
+    const vals=o.bands.map(b=>b.v(d)), tot=vals.reduce((a,b)=>a+b,0);
+    o.bands.forEach((b,bi)=>{
+      const v=vals[bi]; if(v<=0){acc+=v; return;}
+      const yb=y(acc), yt=y(acc+v), isTop=vals.slice(bi+1).every(z=>z<=0);
+      if(isTop) svg.appendChild(el('path',{fill:b.fill,d:capTop(x0,yt,BAR,yb-yt,4)}));
+      else svg.appendChild(el('rect',{fill:b.fill,x:x0,y:yt+1,width:BAR,height:Math.max(0,yb-yt-1)}));
+      acc+=v;
+    });
+  });
+  svg.appendChild(el('line',{class:'gridline',x1:M.l-6,x2:M.l+plotW,y1:base,y2:base,stroke:'var(--line-strong)'}));
+  (o.means||[]).forEach(r=>{
+    svg.appendChild(el('line',{class:'mean-line',x1:r.pre?M.l:cutX,x2:r.pre?cutX:M.l+plotW,y1:y(r.v),y2:y(r.v)}));
+    const t=el('text',{class:'mean-tag',x:r.pre?M.l+4:M.l+plotW-2,y:y(r.v)-6,'text-anchor':r.pre?'start':'end'});
+    t.textContent=r.lab; svg.appendChild(t);
+  });
+
+  let lm='';
+  D.forEach((d,i)=>{const m=d.start.slice(0,7); if(m===lm)return; lm=m;
+    const t=el('text',{class:'axis-lab',x:x(i)+BAR/2,y:base+16,'text-anchor':'middle'});
+    t.textContent=new Date(d.start+'T00:00:00Z').toLocaleString('en',{month:'short',timeZone:'UTC'}); svg.appendChild(t);
+    const t2=el('text',{class:'axis-lab',x:x(i)+BAR/2,y:base+27,'text-anchor':'middle'}); t2.textContent=m.slice(2,4); svg.appendChild(t2);
+  });
+
+  let cutBottom=base+8;
+  if(o.releaseStrip){
+    const sy=base+60;
+    svg.appendChild(el('rect',{class:'drought',x:cutX,y:sy-11,width:M.l+plotW-cutX,height:22}));
+    svg.appendChild(el('line',{class:'relrail',x1:M.l,x2:M.l+plotW,y1:sy,y2:sy}));
+    REL.forEach(([d,v],i)=>{
+      const px=xd(d);
+      svg.appendChild(el('line',{class:'reltick',x1:px,x2:px,y1:sy-8,y2:sy+8}));
+      const t=el('text',{class:'rellab',x:px,y:sy+(i%2?20:-11),'text-anchor':'middle'}); t.textContent=v; svg.appendChild(t);
+    });
+    const dg=el('text',{class:'drought-tag',x:cutX+10,y:sy+4}); dg.textContent='89 DAYS, NO RELEASE'; svg.appendChild(dg);
+    const sl=el('text',{class:'axis-lab',x:M.l-10,y:sy+3.5,'text-anchor':'end'}); sl.textContent='rel'; svg.appendChild(sl);
+    cutBottom=sy+11;
+  }
+  svg.appendChild(el('line',{class:'cut',x1:cutX,x2:cutX,y1:M.t-16,y2:cutBottom}));
+  const ct=el('text',{class:'cut-tag',x:cutX+6,y:M.t-8}); ct.textContent='RUST REWRITE MERGED'; svg.appendChild(ct);
+  if(o.eras){
+    const a=el('text',{class:'era',x:cutX-8,y:M.t+30,'text-anchor':'end'}); a.textContent=o.eras[0]; svg.appendChild(a);
+    const b=el('text',{class:'era',x:cutX+8,y:M.t+30,'text-anchor':'start'}); b.textContent=o.eras[1]; svg.appendChild(b);
+  }
+
+  D.forEach((d,i)=>{
+    const hit=el('rect',{class:'bar-hit',x:x(i)-GAP/2,y:M.t-16,width:BAR+GAP,height:H+16,tabindex:'0',role:'button'});
+    hit.setAttribute('aria-label',o.aria(d));
+    const show=()=>{
+      tip.innerHTML=o.tip(d); tip.style.opacity=1;
+      const bx=svg.getBoundingClientRect(), wr=tip.offsetParent.getBoundingClientRect();
+      const px=bx.left-wr.left+(x(i)+BAR/2)*(bx.width/W);
+      tip.style.left=Math.min(Math.max(8,px-tip.offsetWidth/2),wr.width-tip.offsetWidth-8)+'px';
+      tip.style.top=(bx.top-wr.top+y(o.top(d))*(bx.height/totalH)-tip.offsetHeight-10)+'px';
+    };
+    hit.addEventListener('pointerenter',show); hit.addEventListener('focus',show);
+    hit.addEventListener('pointerleave',()=>tip.style.opacity=0);
+    hit.addEventListener('blur',()=>tip.style.opacity=0);
+    svg.appendChild(hit);
+  });
+}
+
+chart('chartC','tipC',{
+  M:{t:26,r:16,b:98,l:34}, H:250, yMax:40, step:10, releaseStrip:true,
+  bands:[{v:d=>d.canF,fill:'var(--s2)'},{v:d=>d.can-d.canF,fill:'var(--s1)'}],
+  top:d=>d.can, eras:['ZIG CANARY 1.3.x','RUST CANARY 1.4.x'],
+  means:[{v:5.92,lab:'pre 5.9 opened/wk',pre:1},{v:20.67,lab:'post 20.7 opened/wk',pre:0},
+         {v:2.58,lab:'pre 2.6 fixed/wk',pre:1},{v:8.67,lab:'post 8.7 fixed/wk',pre:0}],
+  aria:d=>`Week ${d.w}, starting ${d.start}: ${d.can} canary bug reports, ${d.canF} since fixed`,
+  tip:d=>`<b>Week ${d.w>0?'+'+d.w:d.w}</b> · from ${d.start}${d.w===12?' (5 days)':''}<br>`
+    +`<b>${d.can}</b> canary bug reports <span style="opacity:.7">(${d.w<0?'1.3.x-canary':'1.4.x'})</span><br>`
+    +`<span class="row"><i class="swatch" style="background:var(--s2)"></i>${d.canF} since fixed (${pct(d.canF,d.can)})</span>`
+    +`<span class="row"><i class="swatch" style="background:var(--s1)"></i>${d.can-d.canF} not</span>`
+    +(d.w>=CENSOR_FROM?`<span class="row" style="margin-top:3px">under 30 days old — fixes still landing</span>`:'')});
+
+chart('chartS','tipS',{
+  M:{t:26,r:16,b:44,l:34}, H:260, yMax:160, step:40,
+  bands:[{v:d=>d.can,fill:'var(--s1)'},{v:d=>d.sta,fill:'var(--s2)'},{v:d=>d.unk,fill:'var(--unk)'}],
+  top:d=>d.bug,
+  means:[{v:69.31,lab:'pre 69.3 bug reports/wk',pre:1},{v:68.92,lab:'post 68.9 bug reports/wk',pre:0}],
+  aria:d=>`Week ${d.w}, starting ${d.start}: ${d.bug} bug reports — ${d.can} canary, ${d.sta} stable only, ${d.unk} no version`,
+  tip:d=>`<b>Week ${d.w>0?'+'+d.w:d.w}</b> · from ${d.start}${d.w===12?' (5 days)':''}<br>`
+    +`<b>${d.bug}</b> bug reports<br>`
+    +`<span class="row"><i class="swatch" style="background:var(--s1)"></i>${d.can} canary (${pct(d.can,d.bug)})</span>`
+    +`<span class="row"><i class="swatch" style="background:var(--s2)"></i>${d.sta} stable 1.3.x only</span>`
+    +`<span class="row"><i class="swatch" style="background:var(--unk)"></i>${d.unk} no version stated</span>`});
+
+chart('chartA','tipA',{
+  M:{t:26,r:16,b:98,l:34}, H:250, yMax:160, step:40, releaseStrip:true,
+  bands:[{v:d=>d.bfix,fill:'var(--s2)'},{v:d=>d.bug-d.bfix,fill:'var(--s1)'}],
+  top:d=>d.bug,
+  means:[{v:69.31,lab:'pre 69.3 opened/wk',pre:1},{v:68.92,lab:'post 68.9 opened/wk',pre:0},
+         {v:28.31,lab:'pre 28.3 fixed/wk',pre:1},{v:27.33,lab:'post 27.3 fixed/wk',pre:0}],
+  aria:d=>`Week ${d.w}, starting ${d.start}: ${d.bug} bug reports opened, ${d.bfix} since fixed`,
+  tip:d=>`<b>Week ${d.w>0?'+'+d.w:d.w}</b> · from ${d.start}${d.w===12?' (5 days)':''}<br>`
+    +`<b>${d.bug}</b> bug reports opened<br>`
+    +`<span class="row"><i class="swatch" style="background:var(--s2)"></i>${d.bfix} since fixed (${pct(d.bfix,d.bug)})</span>`
+    +`<span class="row"><i class="swatch" style="background:var(--s1)"></i>${d.bug-d.bfix} not</span>`
+    +(d.rel.length?`<span class="row" style="margin-top:3px">released v${d.rel.join(', v')}</span>`:'')});
+</script>
+</body>
+</html>
