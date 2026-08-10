@@ -3,6 +3,8 @@
 A study of [oven-sh/bun#30412](https://github.com/oven-sh/bun/pull/30412), which replaced Bun's
 Zig runtime with a Rust one in a single merge, and what it did to the project's defect reports.
 
+![Bug reports naming a canary build, per week, split into closed-as-fixed and not, with the stable-release timeline below. Volume roughly triples at the May 2026 rewrite while the fixed share stays near 42%, and stable releases stop entirely.](./cover.png)
+
 | | |
 | --- | --- |
 | **The rewrite** | [PR #30412](https://github.com/oven-sh/bun/pull/30412) — "Rewrite Bun in Rust" |
@@ -422,6 +424,7 @@ collapse in labelling reads as less triage effort per issue rather than fewer du
 ```text
 index.html                          self-contained interactive report (no build, no CDN — just open it)
 README.md                           this document
+cover.png                           the headline chart (canary bug reports per week, fixed vs not)
 LICENSE                             MIT for code and report, with scope notes for the data files
 CITATION.cff                        citation metadata
 data/
