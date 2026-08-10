@@ -5,6 +5,8 @@ Zig runtime with a Rust one in a single merge, and what it did to the project's 
 
 ![Bug reports naming a canary build, per week, split into closed-as-fixed and not, with the stable-release timeline below. Volume roughly triples at the May 2026 rewrite while the fixed share stays near 42%, and stable releases stop entirely.](./cover.png)
 
+[Full report](https://asmyshlyaev177.github.io/bun-rust-rewrite-analysis/)
+
 | | |
 | --- | --- |
 | **The rewrite** | [PR #30412](https://github.com/oven-sh/bun/pull/30412) — "Rewrite Bun in Rust" |
