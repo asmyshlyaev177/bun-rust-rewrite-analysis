@@ -60,7 +60,7 @@
 .p2-plot .u-select{background:var(--censor)}
 .p2-plot .u-cursor-x,.p2-plot .u-cursor-y{border-color:var(--line-strong)}
 .p2-plot .u-cursor-pt{box-shadow:0 0 0 1.5px var(--surface)}
-.p2-rel{position:absolute; top:0; font-size:9.5px; color:var(--s2); white-space:nowrap; pointer-events:none}
+.p2-rel{position:absolute; top:0; font-size:9.5px; line-height:11px; color:var(--s2); white-space:nowrap; pointer-events:none}
 .p2-relwrap{position:relative}
 </style>
 
@@ -86,7 +86,10 @@ const P2 = __DATA__;
   document.getElementById('p2-relbody').innerHTML =
     `The Rust build reached stable users on <strong>${relDate}</strong> — ${gap} days after the merge, and 99 after the last Zig stable (1.3.14, 2026-05-13). The longest previous gap between two Bun stables since 2024 was 27 days. ` +
     (patches.length
-      ? `Patches resumed with <strong>${patches.map(([, t]) => 'v' + t).join(', ')}</strong>, the first on ${patches[0][0]}.`
+      ? `Patches resumed on <strong>${patches[0][0]}</strong> with v${patches[0][1]}` +
+        (patches.length > 1
+          ? `, <strong>${patches.length}</strong> of them since, most recently v${patches[patches.length - 1][1]} on ${patches[patches.length - 1][0]}.`
+          : `.`)
       : `No patch release has followed it.`);
 
   document.getElementById('p2-volhead').textContent = `${num(T.bugs_since_merge)} bug reports since the merge`;
@@ -100,17 +103,57 @@ const P2 = __DATA__;
 
   /* ---------- shared uPlot wiring ---------- */
 
+  const DAY = 86400;
+
+  // Past a few months a bar per day is thinner than the cursor, so wide ranges
+  // are bucketed. The size is chosen from the visible span and recomputed on
+  // zoom, so zooming in genuinely reveals detail rather than stretching bars.
+  const bucketDays = span => span <= 130 ? 1 : span <= 430 ? 7 : 30;
+  const bucketSum = (rows, size, keys) => {
+    if (size === 1) return rows;
+    const out = [];
+    for (let i = 0; i < rows.length; i += size) {
+      const slice = rows.slice(i, i + size);
+      const agg = { d: slice[0].d, days: slice.length };
+      for (const k of keys) agg[k] = slice.reduce((n, r) => n + r[k], 0);
+      out.push(agg);
+    }
+    return out;
+  };
+  // Cumulative series: sampling every nth point keeps the shape, no summing.
+  const bucketLast = (rows, size) => size === 1 ? rows
+    : rows.filter((r, i) => i % size === 0 || i === rows.length - 1);
+
+  const spanLabel = (u, v, rows) => {
+    if (v == null) return '—';
+    const row = rows.find(r => secs(r.d) === v);
+    if (!row || !row.days || row.days === 1) return iso(v);
+    const end = iso(v + (row.days - 1) * DAY);
+    return `${iso(v)} – ${end.slice(5)} (${row.days}d)`;
+  };
+
   // Release markers are absolutely-positioned labels rather than a uPlot series,
-  // so they stay legible at any width and survive a resize redraw.
+  // so they stay legible at any width and survive a resize or a zoom.
+  // LABEL_GAP keeps a row's own labels apart. LABEL_MIN_ANY is the floor across
+  // all rows — low enough that a two-day patch pair still gets both tags, high
+  // enough that a burst of releases does not pile into one column.
+  const LABEL_ROWS = 3, LABEL_GAP = 46, LABEL_MIN_ANY = 4, LINE_GAP = 5;
   const releaseMarkers = (u, tags) => {
     const host = u.root.parentElement;
     host.querySelectorAll('.p2-rel').forEach(n => n.remove());
-    let prev = -Infinity, row = 0;
+    // Each row remembers where its last label ended. A release that fits in no
+    // row goes unlabelled rather than stacking a staircase down over the plot —
+    // its dashed rule still marks the date, and zooming in gives it room.
+    const rowEnds = new Array(LABEL_ROWS).fill(-Infinity);
+    let lastAny = -Infinity;
     for (const [d, tag] of tags) {
       const left = u.valToPos(secs(d), 'x');
       if (left < 0 || left > u.width) continue;
-      row = left - prev < 46 ? row + 1 : 0;
-      prev = left;
+      if (left - lastAny < LABEL_MIN_ANY) continue;
+      const row = rowEnds.findIndex(end => left - end >= LABEL_GAP);
+      if (row === -1) continue;
+      rowEnds[row] = left;
+      lastAny = left;
       const label = document.createElement('span');
       label.className = 'p2-rel';
       label.textContent = 'v' + tag;
@@ -126,9 +169,12 @@ const P2 = __DATA__;
     ctx.strokeStyle = css('--s2');
     ctx.globalAlpha = 0.65;
     ctx.setLineDash([2, 3]);
+    let last = -Infinity;
     for (const [d] of tags) {
       const x = Math.round(u.valToPos(secs(d), 'x', true)) + 0.5;
       if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
+      if (x - last < LINE_GAP) continue;   // indistinguishable at this scale
+      last = x;
       ctx.beginPath();
       ctx.moveTo(x, u.bbox.top);
       ctx.lineTo(x, u.bbox.top + u.bbox.height);
@@ -144,6 +190,31 @@ const P2 = __DATA__;
       if (idx > 0) s.width = idx === i ? base + 1.4 : base;
     });
   };
+
+  // uPlot ships drag-to-zoom and double-click-to-reset; this adds the wheel,
+  // clamped to the data's own extent so you cannot scroll off into empty space.
+  const wheelZoom = (lo, hi) => ({
+    hooks: {
+      ready: [u => {
+        u.over.addEventListener('wheel', e => {
+          e.preventDefault();
+          const { min, max } = u.scales.x;
+          // cursor.left is -10 while the pointer is outside the plot area
+          const px = u.cursor.left > 0 ? u.cursor.left : u.width / 2;
+          const at = u.posToVal(px, 'x');
+          const factor = e.deltaY < 0 ? 0.72 : 1 / 0.72;
+          let nMin = at - (at - min) * factor;
+          let nMax = at + (max - at) * factor;
+          if (nMax - nMin >= hi - lo) { nMin = lo; nMax = hi; }
+          else {
+            if (nMin < lo) { nMax += lo - nMin; nMin = lo; }
+            if (nMax > hi) { nMin -= nMax - hi; nMax = hi; }
+          }
+          u.setScale('x', { min: nMin, max: nMax });
+        }, { passive: false });
+      }],
+    },
+  });
 
   const responsive = make => (host) => {
     let plot = null;
@@ -163,15 +234,35 @@ const P2 = __DATA__;
     font: '10px ui-monospace, monospace',
   });
 
+  const ZOOM_HINT = 'Drag across the plot to zoom, scroll to scale, double-click to reset; the buckets re-fit to whatever range is showing.';
+
   /* ---------- daily volume ---------- */
   (() => {
-    const D = P2.daily;
-    const xs = D.map(d => secs(d.d));
+    const RAW = P2.daily;
+    const lo = secs(RAW[0].d), hi = secs(RAW[RAW.length - 1].d);
     const host = document.getElementById('p2-daily');
     const wrap = document.createElement('div');
     wrap.className = 'p2-relwrap';
     host.appendChild(wrap);
-    const bars = uPlot.paths.bars({ size: [1, 9], align: 0 });
+    const bars = uPlot.paths.bars({ size: [0.92, 44], align: 0 });
+
+    let size = bucketDays(RAW.length), rows = bucketSum(RAW, size, ['all', 'v14']), busy = false;
+    const cols = () => [rows.map(r => secs(r.d)), rows.map(r => r.all), rows.map(r => r.v14)];
+
+    const refit = u => {
+      if (busy) return;
+      const next = bucketDays((u.scales.x.max - u.scales.x.min) / DAY);
+      if (next === size) return;
+      busy = true;
+      size = next;
+      rows = bucketSum(RAW, size, ['all', 'v14']);
+      // setData(_, false) would also pin y to the previous bucket's magnitude,
+      // hiding daily bars under a monthly scale. Reset, then put x back.
+      const { min, max } = u.scales.x;
+      u.setData(cols());
+      u.setScale('x', { min, max });
+      busy = false;
+    };
 
     responsive((el, width) => new uPlot({
       width, height: 250,
@@ -182,19 +273,21 @@ const P2 = __DATA__;
         { ...axisStyle(), size: 40 },
       ],
       series: [
-        { label: 'day', value: (u, v) => v == null ? '—' : iso(v) },
+        { label: 'opened', value: (u, v) => spanLabel(u, v, rows) },
         { label: 'all issues', stroke: css('--unk'), fill: css('--unk') + '8c', paths: bars, points: { show: false } },
         { label: 'names a 1.4.x build', stroke: css('--s1'), fill: css('--s1'), paths: bars, points: { show: false } },
       ],
+      plugins: [wheelZoom(lo, hi)],
       hooks: {
+        setScale: [(u, key) => { if (key === 'x') refit(u); }],
         draw: [releaseLines(rel14), u => releaseMarkers(u, rel14)],
         setSize: [u => releaseMarkers(u, rel14)],
       },
-    }, [xs, D.map(d => d.all), D.map(d => d.v14)], el))(wrap);
+    }, cols(), el))(wrap);
   })();
 
   document.getElementById('p2-dailycap').innerHTML =
-    `Every issue opened in <code>oven-sh/bun</code> since the merge, one bar per day; the filled bar is the subset naming a 1.4.x build. Dashed rules mark stable releases. Hover for a day's counts. Reports ran 12–15 a day through the canary-only period, peaked at <strong>42</strong> on the Monday after the stable release, and were back to baseline within eight days. Volume is exposure × defect density × willingness to report — the stable release moved the first term hard, so the spike is not a defect-rate measurement.`;
+    `Every issue opened in <code>oven-sh/bun</code> since the merge; the filled bar is the subset naming a 1.4.x build. Dashed rules mark stable releases, and where they crowd together only the ones with room are labelled. ${ZOOM_HINT} Reports ran 12–15 a day through the canary-only period, peaked at <strong>42</strong> on the Monday after the stable release, and were back to baseline within eight days. Volume is exposure × defect density × willingness to report — the stable release moved the first term hard, so the spike is not a defect-rate measurement.`;
 
   /* ---------- crash class ---------- */
   (() => {
@@ -207,6 +300,7 @@ const P2 = __DATA__;
       ['panic', 'panic', '--ink'],
       ['segfault', 'segfault / access violation', '--unk'],
     ];
+    const lo = secs(K[0].d), hi = secs(K[K.length - 1].d);
     const host = document.getElementById('p2-crash');
     const wrap = document.createElement('div');
     wrap.className = 'p2-relwrap';
@@ -214,31 +308,49 @@ const P2 = __DATA__;
     const tags = rel14.filter(([d]) => d >= K[0].d);
     const WIDTH = 1.9;
 
+    let size = bucketDays(K.length), rows = bucketLast(K, size), busy = false;
+    const cols = () => [rows.map(r => secs(r.d)), ...defs.map(([key]) => rows.map(r => r[key]))];
+
+    const refit = u => {
+      if (busy) return;
+      const next = bucketDays((u.scales.x.max - u.scales.x.min) / DAY);
+      if (next === size) return;
+      busy = true;
+      size = next;
+      rows = bucketLast(K, size);
+      const { min, max } = u.scales.x;
+      u.setData(cols());
+      u.setScale('x', { min, max });
+      busy = false;
+    };
+
     responsive((el, width) => new uPlot({
       width, height: 250,
       cursor: { focus: { prox: 24 }, points: { size: 7 } },
       focus: { alpha: 0.22 },
       scales: { x: { time: true } },
       axes: [
-        { ...axisStyle(), space: 90, values: (u, vs) => vs.map(v => iso(v).slice(5)) },
+        { ...axisStyle(), space: 90 },
         { ...axisStyle(), size: 40 },
       ],
       series: [
-        { label: 'date', value: (u, v) => v == null ? '—' : iso(v) },
+        { label: 'as of', value: (u, v) => v == null ? '—' : iso(v) },
         ...defs.map(([, label, token]) => ({
           label, stroke: css(token), width: WIDTH, points: { show: false },
         })),
       ],
+      plugins: [wheelZoom(lo, hi)],
       hooks: {
         setSeries: [emphasise(WIDTH)],
+        setScale: [(u, key) => { if (key === 'x') refit(u); }],
         draw: [releaseLines(tags), u => releaseMarkers(u, tags)],
         setSize: [u => releaseMarkers(u, tags)],
       },
-    }, [K.map(p => secs(p.d)), ...defs.map(([key]) => K.map(p => p[key]))], el))(wrap);
+    }, cols(), el))(wrap);
   })();
 
   document.getElementById('p2-crashcap').innerHTML =
-    `Issues whose title or body matches each keyword class, counted cumulatively from the day 1.4.0 shipped. Hover a line to isolate it. Keyword matching is a proxy, not a triage verdict: it over-counts issues that merely mention the word and under-counts crashes described without it. It is used here because the <code>crash</code> label is applied to only ${T.crash_labelled} of the ${kw.crash} issues that mention one, so label counts measure triage capacity rather than defects. Segfaults and panics are the pair that speak to the memory-safety thesis directly — a rewrite into safe Rust should not produce them, though Bun still links JavaScriptCore, which is C++.`;
+    `Issues whose title or body matches each keyword class, counted cumulatively from the day 1.4.0 shipped. Hover a line to isolate it. ${ZOOM_HINT} Keyword matching is a proxy, not a triage verdict: it over-counts issues that merely mention the word and under-counts crashes described without it. It is used here because the <code>crash</code> label is applied to only ${T.crash_labelled} of the ${kw.crash} issues that mention one, so label counts measure triage capacity rather than defects. Segfaults and panics are the pair that speak to the memory-safety thesis directly — a rewrite into safe Rust should not produce them, though Bun still links JavaScriptCore, which is C++.`;
 
   // The charts add height after the browser has already jumped to the fragment,
   // so a deep link into this section lands short of it without a second scroll.
@@ -248,6 +360,7 @@ const P2 = __DATA__;
   }
 
   /* ---------- cohort table ---------- */
+
   const rows = [
     ['Pre-rewrite baseline (26 wks of Zig)', C.pre],
     ['Post-merge, canary only', C.post_pre140],

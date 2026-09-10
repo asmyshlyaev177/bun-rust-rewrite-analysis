@@ -4,7 +4,7 @@
   "private": true,
   "description": "Issue-tracker study of oven-sh/bun#30412, the Zig-to-Rust rewrite",
   "scripts": {
-    "refresh": "python3 part2/update.py"
+    "build": "python3 part2/update.py"
   },
   "dependencies": {
     "uplot": "^1.6.32"

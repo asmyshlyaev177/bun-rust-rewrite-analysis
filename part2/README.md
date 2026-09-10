@@ -45,14 +45,34 @@ flag from the cached bodies, so a classifier change costs no API calls.
 
 [uPlot](https://github.com/leeoniya/uPlot) (~50 KB minified, no dependencies),
 inlined into the page from `node_modules` at injection time so `index.html` stays
-a single file that opens over `file://` with nothing to fetch. Hovering a line in
-the crash chart thickens it and dims the rest; the legend tracks the cursor's
-date. uPlot has no per-series width on focus, so the thickening is a `setSeries`
-hook — see `emphasise` in `block.html`.
+a single file that opens over `file://` with nothing to fetch.
 
-Release markers are absolutely-positioned labels over the canvas rather than a
-plot series, which keeps them readable at any width and lets close-together tags
-stagger onto a second row.
+**Hover.** Hovering a line in the crash chart thickens it and dims the rest,
+while the legend tracks the cursor's date. uPlot has no per-series width on
+focus, so the thickening is a `setSeries` hook — see `emphasise`.
+
+**Zoom.** Drag across a plot to zoom, scroll to scale, double-click to reset.
+Drag and double-click are uPlot's; the wheel is a small plugin, clamped to the
+data's extent so you cannot scroll off into empty space.
+
+**Buckets follow the zoom.** A bar per day stops being hoverable past a few
+months, so the daily chart aggregates into weeks above 130 days and months above
+430, and the cumulative chart samples every nth point. The size is recomputed
+from the *visible* span on every `setScale`, so zooming in genuinely reveals
+detail. One trap worth knowing: `setData(rows, false)` preserves the x range but
+also pins **y** to the previous bucket's magnitude, which hides daily bars under
+a monthly scale — so the re-bucket resets the scales and puts x back by hand.
+
+**Release markers** are absolutely-positioned labels over the canvas rather than
+a plot series, so they stay readable at any width. Close tags stagger across
+three rows; a release that fits in none goes unlabelled rather than stacking a
+staircase down over the plot, and zooming in gives it room. Their line-height is
+pinned to 11px against the 12px row pitch — on the inherited 1.5 line-height the
+rows overlapped by 2px and the labels smeared together.
+
+Each of those was found by replaying the charts against a synthetic extra year
+of data; all of them looked fine on the short window the charts ship with. Worth
+re-checking a long range by hand before trusting a change here.
 
 ## What differs from part 1
 
