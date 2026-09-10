@@ -1,0 +1,264 @@
+<section id="after-the-stable-release" style="scroll-margin-top:24px">
+  <h2>7 &mdash; After the stable release <span id="p2-asof" style="font-weight:400; letter-spacing:.06em; text-transform:none; color:var(--faint)"></span></h2>
+  <p class="prose lede" style="font-size:14px">
+    Sections 1&ndash;6 are frozen at the 2026-08-10 pull, when the Rust build shipped to canary only.
+    This one re-reads the tracker and updates itself. The argument these numbers were gathered for is in
+    <a href="https://asmyshlyaev177.dev/blog/bun-rust-rewrite-bug-count">I counted every Bun bug before and after the Rust rewrite</a>.
+  </p>
+  <div class="cards">
+    <div class="card">
+      <span class="tag">Stable shipped</span>
+      <h3 id="p2-relhead"></h3>
+      <p id="p2-relbody"></p>
+    </div>
+    <div class="card">
+      <span class="tag">Volume</span>
+      <h3 id="p2-volhead"></h3>
+      <p id="p2-volbody"></p>
+    </div>
+    <div class="card">
+      <span class="tag">Crash class</span>
+      <h3 id="p2-crashhead"></h3>
+      <p id="p2-crashbody"></p>
+    </div>
+  </div>
+
+  <figure>
+    <h3>Issues opened per day since the rewrite merged</h3>
+    <div id="p2-daily" class="p2-plot"></div>
+    <figcaption id="p2-dailycap"></figcaption>
+  </figure>
+
+  <figure>
+    <h3>Crash-class reports since 1.4.0 went stable, cumulative</h3>
+    <div id="p2-crash" class="p2-plot"></div>
+    <figcaption id="p2-crashcap"></figcaption>
+  </figure>
+
+  <div class="tablebox">
+    <table>
+      <thead><tr>
+        <th>Cohort</th><th>Bug reports</th><th>Closed as fixed</th><th>Fix rate</th><th>Median time to fix</th>
+      </tr></thead>
+      <tbody id="p2-cohorts"></tbody>
+    </table>
+  </div>
+</section>
+
+<style>__UPLOT_CSS__</style>
+<style>
+/* uPlot ships its own palette; repaint it in the report's tokens. */
+.p2-plot .uplot{width:100%; font-family:inherit}
+.p2-plot .u-wrap{margin:0 auto}
+.p2-plot .u-legend{font-size:11.5px; color:var(--muted); margin-top:9px; text-align:left}
+.p2-plot .u-legend .u-marker{width:13px; height:2.5px; border:0; margin-right:6px; vertical-align:middle}
+.p2-plot .u-legend .u-series{cursor:default; padding:1px 0}
+.p2-plot .u-legend .u-series th{font-weight:400}
+.p2-plot .u-legend .u-series.u-off{opacity:.4}
+.p2-plot .u-legend .u-value{color:var(--ink); font-variant-numeric:tabular-nums}
+.p2-plot .u-legend.u-inline{display:flex; flex-wrap:wrap; gap:2px 20px}
+.p2-plot .u-select{background:var(--censor)}
+.p2-plot .u-cursor-x,.p2-plot .u-cursor-y{border-color:var(--line-strong)}
+.p2-plot .u-cursor-pt{box-shadow:0 0 0 1.5px var(--surface)}
+.p2-rel{position:absolute; top:0; font-size:9.5px; color:var(--s2); white-space:nowrap; pointer-events:none}
+.p2-relwrap{position:relative}
+</style>
+
+<script>__UPLOT_JS__</script>
+<script>
+const P2 = __DATA__;
+
+(() => {
+  const num = n => n.toLocaleString('en-US');
+  const secs = d => Date.parse(d + 'T00:00:00Z') / 1000;
+  const iso = ts => new Date(ts * 1000).toISOString().slice(0, 10);
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const T = P2.totals, C = P2.cohorts;
+  const rel14 = P2.releases.filter(([d]) => d >= P2.merge.slice(0, 10));
+  const relDate = P2.release140.slice(0, 10);
+
+  document.getElementById('p2-asof').textContent = `data pulled ${P2.generated.slice(0, 10)}`;
+
+  /* ---------- cards ---------- */
+  const gap = Math.round((secs(relDate) - secs(P2.merge.slice(0, 10))) / 86400);
+  const patches = rel14.filter(([, t]) => t !== '1.4.0');
+  document.getElementById('p2-relhead').textContent = `1.4.0 after ${gap} days`;
+  document.getElementById('p2-relbody').innerHTML =
+    `The Rust build reached stable users on <strong>${relDate}</strong> — ${gap} days after the merge, and 99 after the last Zig stable (1.3.14, 2026-05-13). The longest previous gap between two Bun stables since 2024 was 27 days. ` +
+    (patches.length
+      ? `Patches resumed with <strong>${patches.map(([, t]) => 'v' + t).join(', ')}</strong>, the first on ${patches[0][0]}.`
+      : `No patch release has followed it.`);
+
+  document.getElementById('p2-volhead').textContent = `${num(T.bugs_since_merge)} bug reports since the merge`;
+  document.getElementById('p2-volbody').innerHTML =
+    `<strong>${num(T.since_merge)}</strong> issues filed since 2026-05-14, <strong>${num(T.bugs_since_merge)}</strong> of them bug reports, <strong>${num(T.open_now)}</strong> still open. Since 1.4.0 went stable: <strong>${num(T.since_140)}</strong> issues, <strong>${num(T.bugs_since_140)}</strong> bugs, <strong>${num(T.open_since_140)}</strong> open (${Math.round(100 * T.open_since_140 / T.since_140)}%).`;
+
+  const kw = T.kw_since_140;
+  document.getElementById('p2-crashhead').textContent = `${kw.crash} crashes, ${kw.hang} hangs`;
+  document.getElementById('p2-crashbody').innerHTML =
+    `Of ${num(T.since_140)} issues filed since the stable release, <strong>${kw.crash}</strong> mention a crash, <strong>${kw.hang}</strong> a hang, freeze or deadlock, <strong>${kw.panic}</strong> a panic and <strong>${kw.segfault}</strong> a segfault or access violation — ${Math.round(100 * (kw.crash + kw.hang) / T.since_140)}% of the intake between them. Only <strong>${T.crash_labelled}</strong> carry the <code>crash</code> label, which measures triage rather than defects.`;
+
+  /* ---------- shared uPlot wiring ---------- */
+
+  // Release markers are absolutely-positioned labels rather than a uPlot series,
+  // so they stay legible at any width and survive a resize redraw.
+  const releaseMarkers = (u, tags) => {
+    const host = u.root.parentElement;
+    host.querySelectorAll('.p2-rel').forEach(n => n.remove());
+    let prev = -Infinity, row = 0;
+    for (const [d, tag] of tags) {
+      const left = u.valToPos(secs(d), 'x');
+      if (left < 0 || left > u.width) continue;
+      row = left - prev < 46 ? row + 1 : 0;
+      prev = left;
+      const label = document.createElement('span');
+      label.className = 'p2-rel';
+      label.textContent = 'v' + tag;
+      label.style.left = (left + 3) + 'px';
+      label.style.top = (row * 12) + 'px';
+      host.appendChild(label);
+    }
+  };
+
+  const releaseLines = tags => (u) => {
+    const { ctx } = u;
+    ctx.save();
+    ctx.strokeStyle = css('--s2');
+    ctx.globalAlpha = 0.65;
+    ctx.setLineDash([2, 3]);
+    for (const [d] of tags) {
+      const x = Math.round(u.valToPos(secs(d), 'x', true)) + 0.5;
+      if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, u.bbox.top);
+      ctx.lineTo(x, u.bbox.top + u.bbox.height);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  // uPlot has no per-series width on focus, so hovering thickens the focused
+  // line by hand; everything else is dimmed by the focus alpha.
+  const emphasise = base => (u, i) => {
+    u.series.forEach((s, idx) => {
+      if (idx > 0) s.width = idx === i ? base + 1.4 : base;
+    });
+  };
+
+  const responsive = make => (host) => {
+    let plot = null;
+    const draw = () => {
+      const width = Math.max(host.clientWidth, 320);
+      if (plot) plot.setSize({ width, height: plot.height });
+      else plot = make(host, width);
+    };
+    draw();
+    new ResizeObserver(draw).observe(host);
+  };
+
+  const axisStyle = () => ({
+    stroke: css('--faint'),
+    grid: { stroke: css('--line'), width: 1 },
+    ticks: { stroke: css('--line'), width: 1, size: 4 },
+    font: '10px ui-monospace, monospace',
+  });
+
+  /* ---------- daily volume ---------- */
+  (() => {
+    const D = P2.daily;
+    const xs = D.map(d => secs(d.d));
+    const host = document.getElementById('p2-daily');
+    const wrap = document.createElement('div');
+    wrap.className = 'p2-relwrap';
+    host.appendChild(wrap);
+    const bars = uPlot.paths.bars({ size: [1, 9], align: 0 });
+
+    responsive((el, width) => new uPlot({
+      width, height: 250,
+      cursor: { y: false, points: { size: 6 } },
+      scales: { x: { time: true } },
+      axes: [
+        { ...axisStyle(), space: 80 },
+        { ...axisStyle(), size: 40 },
+      ],
+      series: [
+        { label: 'day', value: (u, v) => v == null ? '—' : iso(v) },
+        { label: 'all issues', stroke: css('--unk'), fill: css('--unk') + '8c', paths: bars, points: { show: false } },
+        { label: 'names a 1.4.x build', stroke: css('--s1'), fill: css('--s1'), paths: bars, points: { show: false } },
+      ],
+      hooks: {
+        draw: [releaseLines(rel14), u => releaseMarkers(u, rel14)],
+        setSize: [u => releaseMarkers(u, rel14)],
+      },
+    }, [xs, D.map(d => d.all), D.map(d => d.v14)], el))(wrap);
+  })();
+
+  document.getElementById('p2-dailycap').innerHTML =
+    `Every issue opened in <code>oven-sh/bun</code> since the merge, one bar per day; the filled bar is the subset naming a 1.4.x build. Dashed rules mark stable releases. Hover for a day's counts. Reports ran 12–15 a day through the canary-only period, peaked at <strong>42</strong> on the Monday after the stable release, and were back to baseline within eight days. Volume is exposure × defect density × willingness to report — the stable release moved the first term hard, so the spike is not a defect-rate measurement.`;
+
+  /* ---------- crash class ---------- */
+  (() => {
+    const K = P2.keywords;
+    if (K.length < 2) return;
+    const defs = [
+      ['crash', 'crash', '--s1'],
+      ['hang', 'hang / freeze / deadlock', '--s2'],
+      ['memory', 'OOM / leak / heap', '--pre'],
+      ['panic', 'panic', '--ink'],
+      ['segfault', 'segfault / access violation', '--unk'],
+    ];
+    const host = document.getElementById('p2-crash');
+    const wrap = document.createElement('div');
+    wrap.className = 'p2-relwrap';
+    host.appendChild(wrap);
+    const tags = rel14.filter(([d]) => d >= K[0].d);
+    const WIDTH = 1.9;
+
+    responsive((el, width) => new uPlot({
+      width, height: 250,
+      cursor: { focus: { prox: 24 }, points: { size: 7 } },
+      focus: { alpha: 0.22 },
+      scales: { x: { time: true } },
+      axes: [
+        { ...axisStyle(), space: 90, values: (u, vs) => vs.map(v => iso(v).slice(5)) },
+        { ...axisStyle(), size: 40 },
+      ],
+      series: [
+        { label: 'date', value: (u, v) => v == null ? '—' : iso(v) },
+        ...defs.map(([, label, token]) => ({
+          label, stroke: css(token), width: WIDTH, points: { show: false },
+        })),
+      ],
+      hooks: {
+        setSeries: [emphasise(WIDTH)],
+        draw: [releaseLines(tags), u => releaseMarkers(u, tags)],
+        setSize: [u => releaseMarkers(u, tags)],
+      },
+    }, [K.map(p => secs(p.d)), ...defs.map(([key]) => K.map(p => p[key]))], el))(wrap);
+  })();
+
+  document.getElementById('p2-crashcap').innerHTML =
+    `Issues whose title or body matches each keyword class, counted cumulatively from the day 1.4.0 shipped. Hover a line to isolate it. Keyword matching is a proxy, not a triage verdict: it over-counts issues that merely mention the word and under-counts crashes described without it. It is used here because the <code>crash</code> label is applied to only ${T.crash_labelled} of the ${kw.crash} issues that mention one, so label counts measure triage capacity rather than defects. Segfaults and panics are the pair that speak to the memory-safety thesis directly — a rewrite into safe Rust should not produce them, though Bun still links JavaScriptCore, which is C++.`;
+
+  // The charts add height after the browser has already jumped to the fragment,
+  // so a deep link into this section lands short of it without a second scroll.
+  if (location.hash === '#after-the-stable-release') {
+    requestAnimationFrame(() =>
+      document.getElementById('after-the-stable-release').scrollIntoView());
+  }
+
+  /* ---------- cohort table ---------- */
+  const rows = [
+    ['Pre-rewrite baseline (26 wks of Zig)', C.pre],
+    ['Post-merge, canary only', C.post_pre140],
+    ['Post-merge, since 1.4.0 stable', C.post_140],
+    ['Post-merge, all', C.post],
+  ];
+  document.getElementById('p2-cohorts').innerHTML = rows.map(([label, s], i) => {
+    const bold = t => i === 3 ? `<strong>${t}</strong>` : t;
+    return `<tr><td>${bold(label)}</td><td class="num">${num(s.n)}</td>` +
+      `<td class="num">${num(s.fixed)}</td><td class="num">${bold(s.rate.toFixed(1) + '%')}</td>` +
+      `<td class="num">${s.median_days}d</td></tr>`;
+  }).join('');
+})();
+</script>

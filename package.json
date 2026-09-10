@@ -1,0 +1,13 @@
+{
+  "name": "bun-rust-rewrite-analysis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Issue-tracker study of oven-sh/bun#30412, the Zig-to-Rust rewrite",
+  "scripts": {
+    "refresh": "python3 part2/update.py"
+  },
+  "dependencies": {
+    "uplot": "^1.6.32"
+  },
+  "license": "MIT"
+}
