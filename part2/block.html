@@ -246,7 +246,10 @@ const P2 = __DATA__;
     host.appendChild(wrap);
     const bars = uPlot.paths.bars({ size: [0.92, 44], align: 0 });
 
-    let size = bucketDays(RAW.length), rows = bucketSum(RAW, size, ['all', 'v14']), busy = false;
+    // Seed from the span refit measures, never the row count — n points span n-1
+    // days, so a row count can cross a threshold its span does not. Re-bucketing
+    // during init then leaves x on the old series' last point and y at its scale.
+    let size = bucketDays((hi - lo) / DAY), rows = bucketSum(RAW, size, ['all', 'v14']), busy = false;
     const cols = () => [rows.map(r => secs(r.d)), rows.map(r => r.all), rows.map(r => r.v14)];
 
     const refit = u => {
@@ -308,7 +311,8 @@ const P2 = __DATA__;
     const tags = rel14.filter(([d]) => d >= K[0].d);
     const WIDTH = 1.9;
 
-    let size = bucketDays(K.length), rows = bucketLast(K, size), busy = false;
+    // Span, not row count, for the reason the daily chart's seed gives.
+    let size = bucketDays((hi - lo) / DAY), rows = bucketLast(K, size), busy = false;
     const cols = () => [rows.map(r => secs(r.d)), ...defs.map(([key]) => rows.map(r => r[key]))];
 
     const refit = u => {
