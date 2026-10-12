@@ -24,7 +24,7 @@
   </div>
 
   <figure>
-    <h3>Issues opened per day since the rewrite merged</h3>
+    <h3 id="p2-dailytitle">Issues opened per day since the rewrite merged</h3>
     <div id="p2-daily" class="p2-plot"></div>
     <figcaption id="p2-dailycap"></figcaption>
   </figure>
@@ -65,6 +65,7 @@
 </style>
 
 <script>__UPLOT_JS__</script>
+<script>__ECHARTS_JS__</script>
 <script>
 const P2 = __DATA__;
 
@@ -105,32 +106,57 @@ const P2 = __DATA__;
 
   const DAY = 86400;
 
-  // Past a few months a bar per day is thinner than the cursor, so wide ranges
-  // are bucketed. The size is chosen from the visible span and recomputed on
-  // zoom, so zooming in genuinely reveals detail rather than stretching bars.
+  // Past a few months a point per day is thinner than the cursor, so the
+  // cumulative chart samples wide ranges, sized from the visible span on zoom.
   const bucketDays = span => span <= 130 ? 1 : span <= 430 ? 7 : 30;
-  const bucketSum = (rows, size, keys) => {
-    if (size === 1) return rows;
-    const out = [];
-    for (let i = 0; i < rows.length; i += size) {
-      const slice = rows.slice(i, i + size);
-      const agg = { d: slice[0].d, days: slice.length };
-      for (const k of keys) agg[k] = slice.reduce((n, r) => n + r[k], 0);
-      out.push(agg);
-    }
-    return out;
-  };
   // Cumulative series: sampling every nth point keeps the shape, no summing.
   const bucketLast = (rows, size) => size === 1 ? rows
     : rows.filter((r, i) => i % size === 0 || i === rows.length - 1);
 
-  const spanLabel = (u, v, rows) => {
-    if (v == null) return '—';
-    const row = rows.find(r => secs(r.d) === v);
-    if (!row || !row.days || row.days === 1) return iso(v);
-    const end = iso(v + (row.days - 1) * DAY);
-    return `${iso(v)} – ${end.slice(5)} (${row.days}d)`;
+  // Calendar units for the volume bars, coarsest first. `start` maps a date to
+  // its bucket's first day, `next` maps that day to the following bucket's.
+  const utcDay = (y, m, d = 1) => iso(Date.UTC(y, m, d) / 1000);
+  const UNITS = [
+    { name: 'year', start: d => d.slice(0, 4) + '-01-01', next: s => utcDay(+s.slice(0, 4) + 1, 0) },
+    { name: 'month', start: d => d.slice(0, 7) + '-01', next: s => utcDay(+s.slice(0, 4), +s.slice(5, 7)) },
+    { name: 'week', start: d => iso(secs(d) - (new Date(secs(d) * 1000).getUTCDay() + 6) % 7 * DAY), next: s => iso(secs(s) + 7 * DAY) },
+    { name: 'day', start: d => d, next: s => iso(secs(s) + DAY) },
+  ];
+  // The finest unit that keeps at most MAX_BUCKETS bars in view; past that a bar
+  // gets too thin to read or hover, so the view steps up to the next unit.
+  const MAX_BUCKETS = 60;
+  const bucketCount = (unit, min, max) => {
+    let n = 0;
+    for (let s = unit.start(iso(min)); secs(s) < max && n <= MAX_BUCKETS; s = unit.next(s)) n++;
+    return n;
   };
+  const unitFor = (min, max) => UNITS.findLast(u => bucketCount(u, min, max) <= MAX_BUCKETS) ?? UNITS[0];
+
+  // Buckets are clipped to [lo, hi), so the first and last can be partial; each
+  // keeps its drawn extent and both day counts so the legend can say so.
+  const bucketCalendar = (rows, unit, lo, hi, keys) => {
+    const out = [];
+    for (const r of rows) {
+      const key = unit.start(r.d);
+      if (out.at(-1)?.key !== key) {
+        const start = Math.max(secs(key), lo), end = Math.min(secs(unit.next(key)), hi);
+        const full = (secs(unit.next(key)) - secs(key)) / DAY;
+        out.push({ key, start, end, days: (end - start) / DAY, full, ...Object.fromEntries(keys.map(k => [k, 0])) });
+      }
+      for (const k of keys) out.at(-1)[k] += r[k];
+    }
+    return out;
+  };
+
+  const bucketName = {
+    year: b => b.key.slice(0, 4),
+    month: b => new Date(secs(b.key) * 1000).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
+    week: b => `week of ${b.key}`,
+    day: b => `${b.key}, ${new Date(secs(b.key) * 1000).toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })}`,
+  };
+  const bucketLabel = (b, unit) => b.days < b.full
+    ? `${bucketName[unit.name](b)} (${b.days} of ${b.full} days)`
+    : bucketName[unit.name](b);
 
   // Release markers are absolutely-positioned labels rather than a uPlot series,
   // so they stay legible at any width and survive a resize or a zoom.
@@ -238,59 +264,126 @@ const P2 = __DATA__;
 
   /* ---------- daily volume ---------- */
   (() => {
-    const RAW = P2.daily;
-    const lo = secs(RAW[0].d), hi = secs(RAW[RAW.length - 1].d);
+    const RAW = P2.daily, MS = 1000;
+    // hi is the end of the last day, so its bar sits inside the axis.
+    const lo = secs(RAW[0].d), hi = secs(RAW[RAW.length - 1].d) + DAY;
+    const title = document.getElementById('p2-dailytitle');
     const host = document.getElementById('p2-daily');
-    const wrap = document.createElement('div');
-    wrap.className = 'p2-relwrap';
-    host.appendChild(wrap);
-    const bars = uPlot.paths.bars({ size: [0.92, 44], align: 0 });
+    host.style.height = '330px';
+    const chart = echarts.init(host);
+    const label = { color: css('--faint'), fontFamily: 'ui-monospace, monospace', fontSize: 10 };
 
-    // Seed from the span refit measures, never the row count — n points span n-1
-    // days, so a row count can cross a threshold its span does not. Re-bucketing
-    // during init then leaves x on the old series' last point and y at its scale.
-    let size = bucketDays((hi - lo) / DAY), rows = bucketSum(RAW, size, ['all', 'v14']), busy = false;
-    const cols = () => [rows.map(r => secs(r.d)), rows.map(r => r.all), rows.map(r => r.v14)];
+    let unit = unitFor(lo, hi), rows = [];
+    // [start, end, count, bucket index]: encode spans x over both ends, so the
+    // weakFilter zoom keeps a bucket that only partly overlaps the view.
+    const spanData = key => rows.map((b, i) => [b.start * MS, b.end * MS, b[key], i]);
+    const rebucket = () => {
+      rows = bucketCalendar(RAW, unit, lo, hi, ['all', 'v14']);
+      title.textContent = `Issues opened per ${unit.name} since the rewrite merged`;
+    };
+    rebucket();
 
-    const refit = u => {
-      if (busy) return;
-      const next = bucketDays((u.scales.x.max - u.scales.x.min) / DAY);
-      if (next === size) return;
-      busy = true;
-      size = next;
-      rows = bucketSum(RAW, size, ['all', 'v14']);
-      // setData(_, false) would also pin y to the previous bucket's magnitude,
-      // hiding daily bars under a monthly scale. Reset, then put x back.
-      const { min, max } = u.scales.x;
-      u.setData(cols());
-      u.setScale('x', { min, max });
-      busy = false;
+    // A bar series gives every bar one width, but months run 28-31 days and the
+    // end buckets are clipped, so each bucket is a rect across its own [start, end).
+    const spanRect = (params, api) => {
+      const [x0, top] = api.coord([api.value(0), api.value(2)]);
+      const [x1, base] = api.coord([api.value(1), 0]);
+      const pad = Math.min((x1 - x0) * 0.04, 3);
+      const shape = echarts.graphic.clipRectByRect(
+        { x: x0 + pad, y: top, width: Math.max(x1 - x0 - 2 * pad, 1), height: base - top },
+        params.coordSys);
+      return shape && { type: 'rect', shape, style: api.style() };
+    };
+    const bucketSeries = (id, name, color, fill) => ({
+      id, name, type: 'custom', renderItem: spanRect, data: spanData(id),
+      encode: { x: [0, 1], y: 2 },
+      itemStyle: { color: fill, borderColor: color, borderWidth: 1 },
+    });
+
+    const tooltip = ({ value }) => {
+      const b = rows[value[3]];
+      return `<strong>${bucketLabel(b, unit)}</strong><br>all issues: ${num(b.all)}<br>names a 1.4.x build: ${num(b.v14)}`;
     };
 
-    responsive((el, width) => new uPlot({
-      width, height: 250,
-      cursor: { y: false, points: { size: 6 } },
-      scales: { x: { time: true } },
-      axes: [
-        { ...axisStyle(), space: 80 },
-        { ...axisStyle(), size: 40 },
+    chart.setOption({
+      animation: false,
+      textStyle: { fontFamily: 'inherit' },
+      grid: { left: 44, right: 14, top: 40, bottom: 64 },
+      legend: { left: 0, top: 0, itemWidth: 13, itemHeight: 8, textStyle: { color: css('--muted'), fontSize: 11.5 }, data: ['all issues', 'names a 1.4.x build'] },
+      tooltip: { trigger: 'item', formatter: tooltip, textStyle: { fontSize: 12 } },
+      xAxis: {
+        type: 'time', min: lo * MS, max: hi * MS,
+        axisLabel: label, axisLine: { lineStyle: { color: css('--line') } },
+        splitLine: { show: true, lineStyle: { color: css('--line') } },
+      },
+      yAxis: [
+        { type: 'value', axisLabel: label, splitLine: { lineStyle: { color: css('--line') } } },
+        // Holds the slider's overview line apart from the bars' scale.
+        { type: 'value', show: false },
+      ],
+      dataZoom: [
+        { type: 'inside', filterMode: 'weakFilter', minValueSpan: 3 * DAY * MS },
+        {
+          type: 'slider', filterMode: 'weakFilter', minValueSpan: 3 * DAY * MS, height: 24, bottom: 8,
+          labelFormatter: v => iso(v / MS), textStyle: label,
+          borderColor: css('--line'), fillerColor: css('--censor'),
+          dataBackground: { lineStyle: { color: css('--unk') }, areaStyle: { color: css('--unk'), opacity: 0.25 } },
+          selectedDataBackground: { lineStyle: { color: css('--s1') }, areaStyle: { color: css('--s1'), opacity: 0.25 } },
+          handleStyle: { color: css('--surface'), borderColor: css('--line-strong') },
+          moveHandleStyle: { color: css('--line-strong') },
+        },
       ],
       series: [
-        { label: 'opened', value: (u, v) => spanLabel(u, v, rows) },
-        { label: 'all issues', stroke: css('--unk'), fill: css('--unk') + '8c', paths: bars, points: { show: false } },
-        { label: 'names a 1.4.x build', stroke: css('--s1'), fill: css('--s1'), paths: bars, points: { show: false } },
+        // The slider draws its overview from the first line series; this one is
+        // the raw daily count, so the overview keeps day-level shape at any zoom.
+        {
+          type: 'line', yAxisIndex: 1, silent: true, showSymbol: false, lineStyle: { opacity: 0 }, tooltip: { show: false },
+          data: RAW.map(r => [secs(r.d) * MS, r.all]),
+        },
+        {
+          ...bucketSeries('all', 'all issues', css('--unk'), css('--unk') + '8c'),
+          markLine: {
+            symbol: 'none', silent: true,
+            lineStyle: { color: css('--s2'), type: [2, 3], opacity: 0.65 },
+            label: { position: 'insideEndTop', formatter: '{b}', color: css('--s2'), fontSize: 9.5, fontFamily: 'ui-monospace, monospace' },
+          },
+        },
+        bucketSeries('v14', 'names a 1.4.x build', css('--s1'), css('--s1')),
       ],
-      plugins: [wheelZoom(lo, hi)],
-      hooks: {
-        setScale: [(u, key) => { if (key === 'x') refit(u); }],
-        draw: [releaseLines(rel14), u => releaseMarkers(u, rel14)],
-        setSize: [u => releaseMarkers(u, rel14)],
-      },
-    }, cols(), el))(wrap);
+    });
+
+    // ECharts' hideOverlap does not reach markLine labels, so a release closer
+    // than LABEL_GAP px to the last labelled one keeps its rule but not its tag.
+    const LABEL_GAP = 13;
+    const releaseMarks = () => {
+      let last = -Infinity;
+      return rel14.map(([d, tag]) => {
+        const x = chart.convertToPixel({ xAxisIndex: 0 }, secs(d) * MS);
+        const show = x - last >= LABEL_GAP;
+        if (show) last = x;
+        return { name: 'v' + tag, xAxis: secs(d) * MS, label: { show } };
+      });
+    };
+    const refresh = () => chart.setOption({ series: [
+      { id: 'all', data: spanData('all'), markLine: { data: releaseMarks() } },
+      { id: 'v14', data: spanData('v14') },
+    ] });
+    refresh();
+
+    chart.on('datazoom', () => {
+      const { start, end } = chart.getOption().dataZoom[0];
+      const next = unitFor(lo + start / 100 * (hi - lo), lo + end / 100 * (hi - lo));
+      if (next !== unit) {
+        unit = next;
+        rebucket();
+      }
+      refresh();
+    });
+    new ResizeObserver(() => { chart.resize(); refresh(); }).observe(host);
   })();
 
   document.getElementById('p2-dailycap').innerHTML =
-    `Every issue opened in <code>oven-sh/bun</code> since the merge; the filled bar is the subset naming a 1.4.x build. Dashed rules mark stable releases, and where they crowd together only the ones with room are labelled. ${ZOOM_HINT} Reports ran 12–15 a day through the canary-only period, peaked at <strong>42</strong> on the Monday after the stable release, and were back to baseline within eight days. Volume is exposure × defect density × willingness to report — the stable release moved the first term hard, so the spike is not a defect-rate measurement.`;
+    `Every issue opened in <code>oven-sh/bun</code> since the merge; the filled bar is the subset naming a 1.4.x build. Bars are calendar days, weeks, months or years, whichever is the finest that fits on screen, so zooming in narrows them; a bucket cut short by the start or end of the data is drawn narrower and its day count shown on hover. Dashed rules mark stable releases. Drag the handles under the plot to pick a range, or scroll over the plot to zoom and drag it to pan. Reports ran 12–15 a day through the canary-only period, peaked at <strong>42</strong> on the Monday after the stable release, and were back to baseline within eight days. Volume is exposure × defect density × willingness to report — the stable release moved the first term hard, so the spike is not a defect-rate measurement.`;
 
   /* ---------- crash class ---------- */
   (() => {
@@ -311,7 +404,8 @@ const P2 = __DATA__;
     const tags = rel14.filter(([d]) => d >= K[0].d);
     const WIDTH = 1.9;
 
-    // Span, not row count, for the reason the daily chart's seed gives.
+    // Seed from the span refit measures, never the row count: n points span n-1
+    // days, so a row count can cross a threshold its span does not.
     let size = bucketDays((hi - lo) / DAY), rows = bucketLast(K, size), busy = false;
     const cols = () => [rows.map(r => secs(r.d)), ...defs.map(([key]) => rows.map(r => r[key]))];
 

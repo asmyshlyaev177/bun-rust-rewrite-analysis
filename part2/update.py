@@ -8,7 +8,7 @@ Writes data/issues.jsonl (committed, one slim record per issue),
 data/series.js (committed, the chart payload) and data/raw.json
 (gitignored cache of the full API response).
 """
-import argparse, collections, datetime as dt, json, re, statistics as st, sys, time, urllib.request
+import argparse, collections, datetime as dt, json, re, statistics as st, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 MERGE = dt.datetime(2026, 5, 14, 8, 9, 34, tzinfo=dt.timezone.utc)
@@ -21,7 +21,9 @@ SLIM = DATA / "issues.jsonl"
 SERIES = DATA / "series.js"
 RELEASES_CACHE = DATA / "releases.json"
 BLOCK = Path(__file__).parent / "block.html"
-VENDOR = Path(__file__).parent.parent / "node_modules" / "uplot" / "dist"
+ROOT = Path(__file__).parent.parent
+VENDOR = ROOT / "node_modules" / "uplot" / "dist"
+ECHARTS_ENTRY = Path(__file__).parent / "echarts.js"
 PAGE = Path(__file__).parent.parent / "index.html"
 START = "<!-- part2:start -->"
 END = "<!-- part2:end -->"
@@ -276,7 +278,12 @@ def inject(payload):
     js, css = VENDOR / "uPlot.iife.min.js", VENDOR / "uPlot.min.css"
     if not js.exists():
         raise SystemExit("uplot is missing — run `pnpm install` in the repo root first")
+    # Tree-shaken to the components the charts use: about half of echarts.min.js.
+    echarts = subprocess.run(
+        ["pnpm", "exec", "esbuild", str(ECHARTS_ENTRY), "--bundle", "--minify", "--format=iife"],
+        cwd=ROOT, check=True, capture_output=True, text=True).stdout
     block = (BLOCK.read_text()
+             .replace("__ECHARTS_JS__", echarts)
              .replace("__UPLOT_JS__", js.read_text())
              .replace("__UPLOT_CSS__", css.read_text())
              .replace("__DATA__", json.dumps(payload, separators=(",", ":"))))
@@ -301,6 +308,8 @@ def main():
 
     if args.no_fetch:
         raw = json.loads(RAW.read_text())
+        # The page says when the data was pulled, which is when raw.json was written.
+        now = dt.datetime.fromtimestamp(RAW.stat().st_mtime, dt.timezone.utc)
     else:
         print("fetching issues...", file=sys.stderr)
         raw = fetch(now.date())

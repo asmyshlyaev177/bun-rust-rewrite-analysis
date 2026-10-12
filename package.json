@@ -7,7 +7,11 @@
     "build": "python3 part2/update.py"
   },
   "dependencies": {
+    "echarts": "^6.1.0",
     "uplot": "^1.6.32"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
 }
